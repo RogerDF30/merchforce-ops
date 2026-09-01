@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merchforce Ops</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css?v=18">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2316192b'/><text x='50' y='68' font-size='55' font-family='sans-serif' font-weight='800' fill='white' text-anchor='middle'>M</text></svg>">
+<style>body { background: #fff; }</style>
+</head>
+<body>
+
+<!-- lock screen -->
+<div id="lock">
+  <div class="lockbox">
+    <div class="logo" style="margin-bottom:14px"><span class="mark" style="background:var(--ink)">M</span> Merchforce Ops</div>
+    <h2>Supplier console</h2>
+    <p>Enter the admin key to continue.</p>
+    <div class="field"><label>Admin key</label><input id="adminKey" type="password" autocomplete="current-password"></div>
+    <div class="form-err" id="lockErr"></div>
+    <button class="btn primary" id="unlockBtn" style="width:100%;justify-content:center">Unlock</button>
+    <p class="note" style="margin:12px 0 0;text-align:center">build <span id="buildTag">—</span></p>
+  </div>
+</div>
+
+<!-- console -->
+<div id="console" hidden>
+  <div class="wrap">
+    <div class="page-head row-between">
+      <div>
+        <h1>Merchforce Ops</h1>
+        <div class="sub">Supplier console · CompanyStore.IO platform</div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn small" id="lockNow">Lock</button>
+      </div>
+    </div>
+    <nav class="chips" id="tabs">
+      <button class="chip on" data-t="requests">Orders</button>
+      <button class="chip" data-t="catalog">Catalog</button>
+      <button class="chip" data-t="brands">Brands</button>
+      <button class="chip" data-t="users">Users</button>
+      <button class="chip" data-t="analytics">Analytics</button>
+      <button class="chip" data-t="settings">Settings</button>
+    </nav>
+    <section class="panel" id="p-requests"><div class="spin"></div></section>
+    <section class="panel" id="p-catalog" hidden></section>
+    <section class="panel" id="p-brands" hidden></section>
+    <section class="panel" id="p-users" hidden></section>
+    <section class="panel" id="p-analytics" hidden></section>
+    <section class="panel" id="p-settings" hidden></section>
+  </div>
+</div>
+
+<!-- right-hand edit drawer -->
+<div class="rdrawer" id="mOverlay" hidden>
+  <div class="rdrawer-inner">
+    <div style="display:flex;justify-content:flex-end"><button class="btn ghost small" id="mClose">✕ Close</button></div>
+    <div id="mBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="assets/js/admin.js?v=18"></script>
+</body>
+</html>

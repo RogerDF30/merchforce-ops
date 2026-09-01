@@ -1,0 +1,871 @@
+/** Merchforce — demo seed data (real catalog sample, CompanyStore published sheet, 31 Aug 2026) */
+var SEED_DATA = {
+ "brands": [
+  {
+   "id": "BR-URBANGEA",
+   "name": "Urban Gear",
+   "sort": 1
+  },
+  {
+   "id": "BR-DAILYOBJ",
+   "name": "Daily Objects",
+   "sort": 2
+  },
+  {
+   "id": "BR-ADIDAS",
+   "name": "Adidas",
+   "sort": 3
+  },
+  {
+   "id": "BR-PARKER",
+   "name": "Parker",
+   "sort": 4
+  },
+  {
+   "id": "BR-BOROSIL",
+   "name": "Borosil",
+   "sort": 5
+  },
+  {
+   "id": "BR-SOIL",
+   "name": "SOIL",
+   "sort": 6
+  }
+ ],
+ "products": [
+  {
+   "sku": "URBAN-294",
+   "name": "Ebony",
+   "brand": "Urban Gear",
+   "category": "Drinkware",
+   "sub": "",
+   "desc": "Ebony",
+   "specs": [
+    "Dimensions: 7 x 7 x 23 cm, capacity: 500ml",
+    "Made from SS 304 grade stainless steel for durability",
+    "Wooden cap with handle for easy carrying",
+    "Keeps drinks hot or cold for up to 6 to 8 hours",
+    "Weight: 273g"
+   ],
+   "image": "https://cdn.store.link/products/store18473/2bdzac-csun-1420.png?versionId=Z90UTSSC10lDyFURcZbLT2MF52C1id.h",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 2826,
+   "tiers": [
+    [
+     25,
+     879
+    ],
+    [
+     100,
+     852
+    ],
+    [
+     250,
+     824
+    ]
+   ],
+   "brand_id": "BR-URBANGEA",
+   "mrp": 1349
+  },
+  {
+   "sku": "UG 02",
+   "name": "Eco Cork Wheat Fibre Eco Friendly Mug",
+   "brand": "Urban Gear",
+   "category": "Drinkware",
+   "sub": "",
+   "desc": "Eco Cork Wheat Fibre Eco Friendly Mug",
+   "specs": [
+    "Eco-friendly 450ml wheat fiber mug with a natural cork grip.",
+    "Designed for a sustainable and comfortable drinking experience.",
+    "Made from BPA-free, antibacterial, and food-grade materials."
+   ],
+   "image": "https://cdn.store.link/products/store18473/dc-dh9-csun-1547.jpg?versionId=.HgN8bukRz3PqV_zNHFKebH8XfcQwOMG",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 3887,
+   "tiers": [
+    [
+     25,
+     275
+    ],
+    [
+     100,
+     238
+    ],
+    [
+     250,
+     200
+    ]
+   ],
+   "brand_id": "BR-URBANGEA",
+   "mrp": 449
+  },
+  {
+   "sku": "UG-DB59",
+   "name": "Thanda Garam Flask",
+   "brand": "Urban Gear",
+   "category": "Drinkware",
+   "sub": "",
+   "desc": "Thanda Garam Flask",
+   "specs": [
+    "Keeps drinks cold for 24 hours and hot for 18 with double-wall vacuum insulation",
+    "Copper coating adds an extra layer of temperature protection",
+    "Both containers feature double-wall insulation and anti-skid bottoms",
+    "Sweat-free exterior for a clean, dry grip",
+    "BPA-free construction for safe, healthy hydration"
+   ],
+   "image": "https://cdn.store.link/products/store18473/8q8yff-csun-0121.png?versionId=XW.w6bzjztVt90Zy_VPszOz14VaMlJvu",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 2379,
+   "tiers": [
+    [
+     25,
+     975
+    ],
+    [
+     100,
+     942
+    ],
+    [
+     250,
+     909
+    ]
+   ],
+   "brand_id": "BR-URBANGEA",
+   "mrp": 1699
+  },
+  {
+   "sku": "URBAN-298",
+   "name": "Urban Gear Thermosteel Bottle",
+   "brand": "Urban Gear",
+   "category": "Drinkware",
+   "sub": "",
+   "desc": "Urban Gear Thermosteel Bottle",
+   "specs": [
+    "Made from high-quality grade 304 stainless steel",
+    "Vacuum double-wall insulation maintains heat for 24 hours and cold for up to 36 hours",
+    "Condensation-free exterior ensures a sweat-free experience, even with icy cold water",
+    "Travel-friendly and durable design",
+    "Dimensions: 9 x 9 x 34 centimeter"
+   ],
+   "image": "https://cdn.store.link/products/store18473/mm1cut-csun-0732.png?versionId=95knhixi6mGfop9rUiuWQ1k0m6nyDkKZ",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 828,
+   "tiers": [
+    [
+     25,
+     885
+    ],
+    [
+     100,
+     723
+    ],
+    [
+     250,
+     560
+    ]
+   ],
+   "brand_id": "BR-URBANGEA",
+   "mrp": 1399
+  },
+  {
+   "sku": "5324866820",
+   "name": "Daily Objects SURGE 3-In-1 Compatible Wireless Charger",
+   "brand": "Daily Objects",
+   "category": "Gadget & Tech",
+   "sub": "",
+   "desc": "Daily Objects SURGE 3-In-1 Compatible Wireless Charger",
+   "specs": [
+    "Qi2-certified 3-in-1 wireless charger with MagSafe compatibility for fast and secure magnetic alignment.",
+    "Delivers up to 15W wireless charging for smartphones, 5W for AirPods, and 5W for Apple Watch.",
+    "Supports iPhone 12 series onwards, select earlier models with MagSafe case, and Qi2-enabled Android phones.",
+    "Crafted from durable aluminium alloy with silicone elements for stability and grip.",
+    "Features non-slip base, flip-fold Apple Watch charger, and adjustable phone viewing angle."
+   ],
+   "image": "https://cdn.store.link/products/store18473/ou164m-surge%203-in-1%20qi2-certified%20magsafe-compatible%20wireless%20charger.png?versionId=IUhcGEK.TEmymSHD4JNz0QQtcj78ijLI",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 1163,
+   "tiers": [
+    [
+     25,
+     7999
+    ],
+    [
+     100,
+     7749
+    ],
+    [
+     250,
+     7499
+    ]
+   ],
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 12499
+  },
+  {
+   "sku": "5324866819",
+   "name": "Daily Obejcts SURGE Foldaway 3-In-1 Qi2-Certified Magsafe-Compatible Wireless Charger",
+   "brand": "Daily Objects",
+   "category": "Gadget & Tech",
+   "sub": "",
+   "desc": "Daily Obejcts SURGE Foldaway 3-In-1 Qi2-Certified Magsafe-Compatible Wireless Charger",
+   "specs": [
+    "Qi2-certified foldaway 3-in-1 wireless charger with MagSafe compatibility for fast and secure magnetic alignment.",
+    "Delivers up to 15W wireless charging for smartphones, 5W for AirPods, and 5W for Apple Watch.",
+    "Compact, travel-friendly design allows simultaneous charging of three devices.",
+    "Crafted from durable aluminium alloy with silicone base for stability and grip.",
+    "Features retractable Apple Watch dock and non-slip AirPods charging pad."
+   ],
+   "image": "https://cdn.store.link/products/store18473/o283dh-surge%20foldaway%203-in-1%20qi2-certified%20magsafe%20compatible%20wireless%20charger.png?versionId=wUBRsXSrot40RQRPc43nWMBDQEYbUXTG",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 824,
+   "tiers": [
+    [
+     25,
+     7999
+    ],
+    [
+     100,
+     7749
+    ],
+    [
+     250,
+     7499
+    ]
+   ],
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 12699
+  },
+  {
+   "sku": "9578398628",
+   "name": "DailyObjects SURGE\u2122 Max 2-In-1 Magnetic Wireless Charger (18W)",
+   "brand": "Daily Objects",
+   "category": "Gadget & Tech",
+   "sub": "",
+   "desc": "DailyObjects SURGE\u2122 Max 2-In-1 Magnetic Wireless Charger (18W)",
+   "specs": [
+    "Qi-certified 2-in-1 magnetic wireless charging station designed to power two devices simultaneously.",
+    "Delivers up to 18W fast wireless charging for MagSafe and Qi-enabled smartphones, and up to 5W for AirPods or earbuds.",
+    "Crafted from durable aluminium alloy with a non-slip silicone base for added stability.",
+    "Features a movable ball head for adjustable phone viewing angles.",
+    "Built-in auto protection against short circuits and electrical hazards."
+   ],
+   "image": "https://cdn.store.link/products/store18473/g1yc3g-surge%E2%84%A2%20max%202-in-1%20magnetic%20wireless%20charging%20charger.png?versionId=v6UpugQiDSequF6VFZ0SIxuZFOKwlYRZ",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 1185,
+   "tiers": [
+    [
+     25,
+     6399
+    ],
+    [
+     100,
+     6199
+    ],
+    [
+     250,
+     5999
+    ]
+   ],
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 9199
+  },
+  {
+   "sku": "6111990716",
+   "name": "Daily Objects Loop Qi2-Certified MagSafe-Compatible Aluminium Power Bank 5000 mAh - Black",
+   "brand": "Daily Objects",
+   "category": "Gadget & Tech",
+   "sub": "",
+   "desc": "Daily Objects Loop Qi2-Certified MagSafe-Compatible Aluminium Power Bank 5000 mAh - Black",
+   "specs": [
+    "Qi2-certified and MagSafe-compatible 5000mAh power bank designed for fast and efficient wireless charging.",
+    "Delivers up to 15W wireless output for iPhones and future Qi2-enabled phones.",
+    "Supports simultaneous charging of iPhone and Apple Watch with secure magnetic alignment.",
+    "Features a two-way USB-C port with up to 20W output, powered by PD 3.0 and Qualcomm 4 technology.",
+    "Crafted from aerospace-grade aluminium in a sleek black finish with signature Loop design."
+   ],
+   "image": "https://cdn.store.link/products/store18473/n8onne-loop%20universal%20power%20bank-%205000%20mah%20black.png?versionId=kRkjRL7tl9nXO_Sn.aaUBydssFwuedq.",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 1059,
+   "tiers": [
+    [
+     25,
+     5599
+    ],
+    [
+     100,
+     5424
+    ],
+    [
+     250,
+     5249
+    ]
+   ],
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 8799
+  },
+  {
+   "sku": "B30906",
+   "name": "Adidas Dryfit Polo T-Shirt",
+   "brand": "Adidas",
+   "category": "Polos",
+   "sub": "QuickPick 1 \ud83c\udfaf",
+   "desc": "Adidas Dryfit Polo T-Shirt",
+   "specs": [
+    "Refresh your clothing with this stylish black polo from Adidas",
+    "Elegant stitching and solid color make it suitable for both formal and casual wear",
+    "Pairs well with jeans or casual trousers for a relaxed or party-ready look",
+    "100% Polyester",
+    "Regular fit"
+   ],
+   "image": "https://cdn.store.link/products/store18473/5zlpcx-csun-0030.jpg?versionId=9gaoEMl6XtNMv9DD_Lq0fW3Szjv3jKQJ",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 499,
+   "tiers": [
+    [
+     25,
+     1279
+    ],
+    [
+     100,
+     1239
+    ],
+    [
+     250,
+     1199
+    ]
+   ],
+   "brand_id": "BR-ADIDAS",
+   "mrp": 2099
+  },
+  {
+   "sku": "DN3093",
+   "name": "Adidas Clima Lite Aeroready T-Shirt",
+   "brand": "Adidas",
+   "category": "Polos",
+   "sub": "",
+   "desc": "Adidas Clima Lite Aeroready T-Shirt",
+   "specs": [
+    "Adidas Clima Lite Aeroready T-Shirt",
+    "Article No. DN3093",
+    "Color: Navy Green",
+    "Sizes available: S, M, L, XL, XXL"
+   ],
+   "image": "https://cdn.store.link/products/store18473/2k1913-adidas-clima-lite-f.jpg?versionId=ZTY1vbxplamLZ2q9stgdrBypi7pNpbwW",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 1190,
+   "tiers": [
+    [
+     25,
+     1440
+    ],
+    [
+     100,
+     1395
+    ],
+    [
+     250,
+     1350
+    ]
+   ],
+   "brand_id": "BR-ADIDAS",
+   "mrp": 2499
+  },
+  {
+   "sku": "DN3224",
+   "name": "Adidas Round Neck Aeroready T-Shirt",
+   "brand": "Adidas",
+   "category": "T-Shirts",
+   "sub": "",
+   "desc": "Adidas Round Neck Aeroready T-Shirt",
+   "specs": [
+    "Adidas Clima Lite Aeroready T-Shirt",
+    "Article No. JE9489",
+    "Color: Cat Syello",
+    "Gender: Men"
+   ],
+   "image": "https://cdn.store.link/products/store18473/7gltlt-adidas-round-neck-aeroready-tshirt-j.jpg?versionId=WuxQnuz4PuiRkeM9Rr82LXRXCXWRKp4D",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 863,
+   "tiers": [
+    [
+     25,
+     1280
+    ],
+    [
+     100,
+     1240
+    ],
+    [
+     250,
+     1200
+    ]
+   ],
+   "brand_id": "BR-ADIDAS",
+   "mrp": 1799
+  },
+  {
+   "sku": "IY3820",
+   "name": "Adidas Cotton Round Neck T-Shirt",
+   "brand": "Adidas",
+   "category": "T-Shirts",
+   "sub": "",
+   "desc": "Brand : Adidas",
+   "specs": [
+    "Adidas 100% Cotton Round Neck Tshirt",
+    "Article No. IY3820",
+    "Color: Shoe Blue",
+    "Gender: Men"
+   ],
+   "image": "https://cdn.store.link/products/store18473/f7kseo-adidas-round-neck-aeroready-tshirt-f.jpg?versionId=7A32hoj0qC_2ixcTfnOKlJ7ZOjc7j9ar",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 1178,
+   "tiers": [
+    [
+     25,
+     1200
+    ],
+    [
+     100,
+     1162
+    ],
+    [
+     250,
+     1125
+    ]
+   ],
+   "brand_id": "BR-ADIDAS",
+   "mrp": 1799
+  },
+  {
+   "sku": "1953184",
+   "name": "Parker Jotter Ballpoint Pen",
+   "brand": "Parker",
+   "category": "Pens",
+   "sub": "QuickPick 2 \ud83c\udfaf",
+   "desc": "Parker Jotter Ballpoint Pen",
+   "specs": [
+    "Writing instrument form: Ballpoint Pen",
+    "Colour: Orange",
+    "Ink Colour: Blue",
+    "Age Range: Adult",
+    "Crafted from durable stainless steel with chrome detailing"
+   ],
+   "image": "https://cdn.store.link/products/store18473/d15q1k-csun-0929.jpg?versionId=z.JIDDPcctHYXWYG1e4xfhi1l_STueu2",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 885,
+   "tiers": [
+    [
+     25,
+     280
+    ],
+    [
+     100,
+     272
+    ],
+    [
+     250,
+     265
+    ]
+   ],
+   "brand_id": "BR-PARKER",
+   "mrp": 399
+  },
+  {
+   "sku": "9000017248",
+   "name": "Parker Vector Standard Chrome Roller Ball Pen",
+   "brand": "Parker",
+   "category": "Pens",
+   "sub": "QuickPick 2 \ud83c\udfaf",
+   "desc": "Parker Vector Standard Chrome Roller Ball Pen",
+   "specs": [
+    "Parker Moments Vector Standard Roller Ball Pen with stainless steel trim",
+    "Mode: Roller ball pen",
+    "Pen opening mechanism: Cap off/Cap on",
+    "Ink color: Blue",
+    "Warranty: 2 years"
+   ],
+   "image": "https://cdn.store.link/products/store18473/wirh1y-csun-0937.jpg?versionId=hCJbNUEjqe4iG00kL86pfBdMC.brYVsZ",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 559,
+   "tiers": [
+    [
+     25,
+     450
+    ],
+    [
+     100,
+     375
+    ],
+    [
+     250,
+     300
+    ]
+   ],
+   "brand_id": "BR-PARKER",
+   "mrp": 799
+  },
+  {
+   "sku": "PARK-002",
+   "name": "Parker Latitude Matte Black CT Ballpoint Pen - Black",
+   "brand": "Parker",
+   "category": "Pens",
+   "sub": "QuickPick 2 \ud83c\udfaf",
+   "desc": "Parker Latitude Matte Black CT Ballpoint Pen - Black",
+   "specs": [
+    "Push/Click mechanism",
+    "Iconic Parker stainless steel clip with prominent feathers in GT/CT finishes",
+    "Brass body with matte black and matte finishes for prominent engraving visibility",
+    "Gold-plated brass band with Parker logo",
+    "ABS shell for smooth grip"
+   ],
+   "image": "https://cdn.store.link/products/store18473/dnny2s-29.png?versionId=drpyqeDrwj1stVZgEhUd1.M5Ew93mkui",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 968,
+   "tiers": [
+    [
+     25,
+     176
+    ],
+    [
+     100,
+     170
+    ],
+    [
+     250,
+     165
+    ]
+   ],
+   "brand_id": "BR-PARKER",
+   "mrp": 289
+  },
+  {
+   "sku": "8902298161024",
+   "name": "Parker Aster Shiny Chrome FP GT",
+   "brand": "Parker",
+   "category": "Pens",
+   "sub": "QuickPick 2 \ud83c\udfaf",
+   "desc": "Parker Aster Shiny Chrome FP GT",
+   "specs": [
+    "Slim and elegant shiny chrome metal body",
+    "Gold-plated stainless steel nib available in medium",
+    "Gold-plated trim for a premium look",
+    "Compatible with Quink size cartridges or converter",
+    "Presented in a premium Parker gift box"
+   ],
+   "image": "https://cdn.store.link/products/store18473/y4xpuc-parker-aster-shiny-chrome-fp-gt%20%281%29.jpg?versionId=hNzp.96v98IZ4Ce4cvenP.9s6OhV_pvd",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 1165,
+   "tiers": [
+    [
+     25,
+     1600
+    ],
+    [
+     100,
+     1550
+    ],
+    [
+     250,
+     1500
+    ]
+   ],
+   "brand_id": "BR-PARKER",
+   "mrp": 2199
+  },
+  {
+   "sku": "BT380BLK130",
+   "name": "Hydra Coffeemate",
+   "brand": "Borosil",
+   "category": "Drinkware",
+   "sub": "QuickPick 1 \ud83c\udfaf",
+   "desc": "Hydra Coffeemate",
+   "specs": [
+    "Keeps beverages hot for 8 hours and cold for 14 hours",
+    "Ideal for sipping slowly or enjoying a quick tea break anytime",
+    "Made from 304 grade, rust-proof, food-grade stainless steel",
+    "Ensures temperature retention and freshness of the beverage",
+    "Features copper-coated double-wall vacuum insulation"
+   ],
+   "image": "https://cdn.store.link/products/store18473/i98dx9-csun-0025%20%281%29.jpg?versionId=PpyR7TSSqFXdPvHEEDHiRvtDzlPbjRVK",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 2240,
+   "tiers": [
+    [
+     25,
+     475
+    ],
+    [
+     100,
+     410
+    ],
+    [
+     250,
+     345
+    ]
+   ],
+   "brand_id": "BR-BOROSIL",
+   "mrp": 849
+  },
+  {
+   "sku": "BTU0500BLK36",
+   "name": "Hydra Hike Tumbler",
+   "brand": "Borosil",
+   "category": "Drinkware",
+   "sub": "QuickPick 1 \ud83c\udfaf",
+   "desc": "Hydra Hike Tumbler",
+   "specs": [
+    "Vacuum insulation with copper coating inside for superior temperature retention",
+    "Keeps beverages hot for up to 9 hours and cold for up to 13 hours",
+    "500 ml capacity offers ample space for longer hydration",
+    "Double-walled construction ensures optimal insulation",
+    "Ergonomic and sleek design for a comfortable grip"
+   ],
+   "image": "https://cdn.store.link/products/store18473/13g399-15.png?versionId=5PWnuUTBDB.JlisgZLcW8sbKItlm6XmW",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 1992,
+   "tiers": [
+    [
+     25,
+     796
+    ],
+    [
+     100,
+     771
+    ],
+    [
+     250,
+     746
+    ]
+   ],
+   "brand_id": "BR-BOROSIL",
+   "mrp": 1399
+  },
+  {
+   "sku": "BT700BLK104",
+   "name": "Trek Water Bottle",
+   "brand": "Borosil",
+   "category": "Drinkware",
+   "sub": "QuickPick 1 \ud83c\udfaf",
+   "desc": "Trek Water Bottle",
+   "specs": [
+    "Made with 304 grade, rust-proof, food-grade stainless steel",
+    "Ensures pure, clean taste with no chemical leaching",
+    "Keeps drinks hot for up to 20 hours and cold for up to 24 hours",
+    "BPA-free and made with non-toxic materials for safe drinking",
+    "Reusable and eco-friendly hydration solution"
+   ],
+   "image": "https://cdn.store.link/products/store18473/c5imh8-16.png?versionId=HUx.XpZ4nOayALrgBeC3Ro2eGLnLQqKe",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 2835,
+   "tiers": [
+    [
+     25,
+     845
+    ],
+    [
+     100,
+     818
+    ],
+    [
+     250,
+     790
+    ]
+   ],
+   "brand_id": "BR-BOROSIL",
+   "mrp": 1399
+  },
+  {
+   "sku": "B0560TI01",
+   "name": "Hydra Adventure",
+   "brand": "Borosil",
+   "category": "Drinkware",
+   "sub": "",
+   "desc": "Brand : Borosil",
+   "specs": [
+    "Features a press-to-open, slide-to-lock leak-proof lid",
+    "Made with food-grade SS 304 rust-proof stainless steel inside",
+    "Equipped with vacuum insulation with copper coating",
+    "Maintains temperature for 8 hours hot and 8 hours cold",
+    "Design supports portability and functionality for outdoor or active use"
+   ],
+   "image": "https://cdn.store.link/products/store18473/cd0rrh-borosil-hydra-green.jpg?versionId=JG9FpXQ1ig5TBELPlWrGlOCoa7cRMIiB",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 2243,
+   "tiers": [
+    [
+     25,
+     1115
+    ],
+    [
+     100,
+     1080
+    ],
+    [
+     250,
+     1045
+    ]
+   ],
+   "brand_id": "BR-BOROSIL",
+   "mrp": 1799
+  },
+  {
+   "sku": "CSUN-0064",
+   "name": "Bamboo Pen I",
+   "brand": "SOIL",
+   "category": "Pens",
+   "sub": "",
+   "desc": "Bamboo Pen I",
+   "specs": [
+    "Elegant ballpoint pen with a bamboo body, metal clip",
+    "Made from bamboo for a sustainable, natural look and feel",
+    "Comes with blue ink, push-button mechanism",
+    "Aluminium metal fittings with bamboo barrel",
+    "Weight: 17g"
+   ],
+   "image": "https://cdn.store.link/products/store18473/to4ywn-csun-0064.png?versionId=A.MBYrMRFYTsCYhjdHMRptYhzqbYrUPZ",
+   "moq": 500,
+   "lead": "45 days",
+   "stock": 1697,
+   "tiers": [
+    [
+     500,
+     105
+    ],
+    [
+     2000,
+     86
+    ],
+    [
+     5000,
+     66
+    ]
+   ],
+   "brand_id": "BR-SOIL",
+   "mrp": 149
+  },
+  {
+   "sku": "CSUN-0124",
+   "name": "Kraft Pen",
+   "brand": "SOIL",
+   "category": "Pens",
+   "sub": "Core ++",
+   "desc": "Brand : SOIL",
+   "specs": [
+    "Eco-friendly ballpoint pen crafted from sustainable bamboo",
+    "Features smooth writing performance with comfortable grip",
+    "Stylish colored accents add a modern touch",
+    "Lightweight and durable"
+   ],
+   "image": "https://cdn.store.link/products/store18473/wg9izy-csun-0124.png?versionId=s2xZZiJeLjp0r4phvpGUKW9cpKbYDN6S",
+   "moq": 25,
+   "lead": "7 days",
+   "stock": 3694,
+   "tiers": [
+    [
+     25,
+     165
+    ],
+    [
+     100,
+     135
+    ],
+    [
+     250,
+     104
+    ]
+   ],
+   "brand_id": "BR-SOIL",
+   "mrp": 229
+  },
+  {
+   "sku": "CSUN-1552",
+   "name": "SOIL Cotton Mask",
+   "brand": "SOIL",
+   "category": "Outerwear",
+   "sub": "",
+   "desc": "SOIL Cotton Mask",
+   "specs": [
+    "Reusable 3-ply fabric mask with a contoured fit",
+    "Outer and inner layers made of 100% soft woven cotton",
+    "Mid layer features filtering non-woven cotton",
+    "Adjustable elasticated ear loops for a secure fit",
+    "Shaped paneling ensures a comfortable and snug fit"
+   ],
+   "image": "https://cdn.store.link/products/store18473/h1vhx4-csun-1552.png?versionId=1Ao.cb7N8efXrQTCUQFrHA50_W81Z4dn",
+   "moq": 500,
+   "lead": "21 days",
+   "stock": 3887,
+   "tiers": [
+    [
+     500,
+     142
+    ],
+    [
+     2000,
+     114
+    ],
+    [
+     5000,
+     86
+    ]
+   ],
+   "brand_id": "BR-SOIL",
+   "mrp": 229
+  },
+  {
+   "sku": "CSUN-0276",
+   "name": "SOIL Single Meeting Notebook",
+   "brand": "SOIL",
+   "category": "Notebooks",
+   "sub": "Core ++",
+   "desc": "SOIL Single Meeting Notebook",
+   "specs": [
+    "Eco-friendly A5 lined stitched notebook",
+    "Made from 100% recycled paper",
+    "Red stitched seam binding",
+    "Suitable for writing, drawing, and painting",
+    "Contains 48 pages"
+   ],
+   "image": "https://cdn.store.link/products/store18473/al1t-i-csun-0276.png?versionId=K34jWGwiaRYYkGTAfncSZsMpvFing5M_",
+   "moq": 25,
+   "lead": "14 days",
+   "stock": 3898,
+   "tiers": [
+    [
+     25,
+     165
+    ],
+    [
+     100,
+     135
+    ],
+    [
+     250,
+     104
+    ]
+   ],
+   "brand_id": "BR-SOIL",
+   "mrp": 229
+  }
+ ]
+};
