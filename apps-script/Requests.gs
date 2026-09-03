@@ -43,7 +43,8 @@ function fnRequestSubmit_(p) {
     gstin: String(p.gstin || '').slice(0, 20), notes: String(p.notes || '').slice(0, 1000),
     user_email: String(p.user_email || ''), total_est: total,
     status_dates: JSON.stringify({ New: String(now_()) }), admin_notes: '', updated: now_(),
-    token: randomToken_(28), stock_state: ''
+    token: randomToken_(28), stock_state: '',
+    company_id: String(p.company_id || ''), raised_by: String(p.actor || p.raised_by || '')
   });
   cleaned.forEach(function (l, idx) {
     appendRecord_('RequestLines', {

@@ -24,7 +24,13 @@ var SHEETS = {
                  // order lifecycle (appended — never reorder the columns above)
                  'token', 'folder_id', 'stock_state',
                  'pi_number', 'pi_url', 'pi_file_id', 'pi_total', 'pi_valid_till',
-                 'po_number', 'po_url', 'po_file_id', 'ship_address', 'place_of_supply'],
+                 'po_number', 'po_url', 'po_file_id', 'ship_address', 'place_of_supply',
+                 // phase 2 (appended — never reorder the columns above)
+                 'company_id', 'raised_by'],
+  Companies:    ['company_id', 'name', 'gstin', 'phone', 'email', 'billing_address',
+                 'ship_address', 'state_code', 'owner', 'notes', 'active', 'created', 'updated'],
+  Contacts:     ['contact_id', 'company_id', 'name', 'email', 'phone', 'role',
+                 'consent', 'consent_ts', 'consent_source', 'unsubscribed', 'created'],
   RequestLines: ['request_id', 'line', 'sku', 'name', 'qty', 'unit_price', 'line_total',
                  'list_price', 'gst', 'hsn'],
   Shipments:    ['request_id', 'shipment_no', 'ship_date', 'carrier', 'tracking',

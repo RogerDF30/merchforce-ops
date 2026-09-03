@@ -10,11 +10,12 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v18';
+var BUILD = 'v19';
 
 var A = {
   key: '', settings: null,
   requests: [], products: [], brands: [], users: [], analytics: null,
+  companies: [], contacts: [],
   days: 90, loaded: {}, syncPreview: null
 };
 
@@ -99,7 +100,7 @@ $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') 
 $('lockNow').onclick = function () { location.reload(); };
 
 /* ---------- tabs ---------- */
-var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
+var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, companies: loadCompanies, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
 document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
     document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
@@ -780,6 +781,218 @@ function editBrand(b) {
     api('adminBrandSave', { brand: { id: b.id, name: $('bName').value.trim(), desc: $('bDesc').value.trim(), logo: logo, sort: Number($('bSort').value), active: $('bActive').checked } })
       .then(function () { closeDrawer(); toast('Brand saved'); loadCatalog(); })
       .catch(function (e) { $('mErr').textContent = e.message; });
+  };
+}
+
+/* ================= COMPANIES ================= */
+
+function loadCompanies() {
+  A.loaded.companies = true;
+  $('p-companies').innerHTML = '<div class="spin"></div>';
+  api('adminCompanies').then(function (res) {
+    A.companies = res.companies;
+    A.contacts = res.contacts;
+    A.unlinked = { names: res.unlinked_names, orders: res.unlinked_orders };
+    renderCompanies();
+  }).catch(function (e) { $('p-companies').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+}
+
+function contactsOf(companyId) {
+  return A.contacts.filter(function (c) { return c.company_id === companyId; });
+}
+
+function renderCompanies() {
+  var u = A.unlinked || { names: 0, orders: 0 };
+  $('p-companies').innerHTML =
+    '<div class="panel-head"><h2>Companies</h2>' +
+      '<span class="sp"></span>' +
+      '<button class="btn primary small" id="coNew">+ Company</button></div>' +
+    '<p class="note" style="margin-top:-6px">Customers and the people at them. Orders attach to a company, which is what makes customer analytics and, later, campaign targeting work.</p>' +
+
+    (u.names
+      ? '<div class="note2 warn"><strong>' + u.orders + ' order' + (u.orders === 1 ? '' : 's') +
+        ' across ' + u.names + ' company name' + (u.names === 1 ? '' : 's') + ' are not linked to a company record.</strong> ' +
+        'Import groups them by name, creates one company each, links the orders and lifts the contact from the most recent order. ' +
+        'It is safe to run more than once. ' +
+        '<button class="btn small" id="coImport" style="margin-left:8px">Import from orders</button>' +
+        '<span id="coImportOut" class="note" style="margin-left:10px"></span></div>'
+      : '') +
+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>Company</th><th>GSTIN</th><th class="num">Contacts</th><th class="num">Orders</th>' +
+      '<th class="num">Value</th><th>Active</th>' +
+    '</tr></thead><tbody id="coRows"></tbody></table></div>';
+
+  var tb = $('coRows');
+  if (!A.companies.length) {
+    tb.innerHTML = '<tr><td colspan="6"><div class="empty" style="padding:26px 0">No companies yet.</div></td></tr>';
+  }
+  A.companies.forEach(function (c) {
+    var tr = document.createElement('tr');
+    tr.className = 'click';
+    tr.innerHTML =
+      '<td><b>' + esc(c.name) + '</b>' + (c.owner ? '<br><small style="color:var(--ink-3)">' + esc(c.owner) + '</small>' : '') + '</td>' +
+      '<td>' + esc(c.gstin || '—') + '</td>' +
+      '<td class="num">' + c.contacts + '</td>' +
+      '<td class="num">' + c.orders + '</td>' +
+      '<td class="num">' + inr(c.value) + '</td>' +
+      '<td>' + (c.active ? '✓' : '—') + '</td>';
+    tr.onclick = function () { editCompany(c); };
+    tb.appendChild(tr);
+  });
+
+  $('coNew').onclick = function () { editCompany(null); };
+  if ($('coImport')) {
+    $('coImport').onclick = function () {
+      $('coImport').disabled = true;
+      $('coImportOut').textContent = 'Importing…';
+      api('adminCompanyImport', { actor: 'admin' }).then(function (res) {
+        toast(res.companies_created + ' companies, ' + res.contacts_created + ' contacts, ' + res.orders_linked + ' orders linked');
+        loadCompanies();
+      }).catch(function (e) {
+        $('coImport').disabled = false;
+        $('coImportOut').textContent = e.message;
+      });
+    };
+  }
+}
+
+function editCompany(c) {
+  var isNew = !c;
+  c = c || { id: '', name: '', gstin: '', phone: '', email: '', billing_address: '',
+             ship_address: '', state_code: '', owner: '', notes: '', active: true, orders: 0 };
+  var list = isNew ? [] : contactsOf(c.id);
+
+  openDrawer(
+    '<h2 style="margin:0 0 14px">' + (isNew ? 'New company' : esc(c.name)) + '</h2>' +
+    '<div class="field"><label>Company name *</label><input id="cName" value="' + esc(c.name) + '"></div>' +
+    '<div class="f2">' +
+      '<div class="field"><label>GSTIN</label><input id="cGstin" value="' + esc(c.gstin) + '" maxlength="15" placeholder="15 characters"></div>' +
+      '<div class="field"><label>State code (place of supply)</label><input id="cState" value="' + esc(c.state_code) + '" maxlength="2" placeholder="29"></div>' +
+      '<div class="field"><label>Phone</label><input id="cPhone" value="' + esc(c.phone) + '"></div>' +
+      '<div class="field"><label>Email</label><input id="cEmail" value="' + esc(c.email) + '"></div>' +
+    '</div>' +
+    '<div class="field"><label>Billing address</label><input id="cBill" value="' + esc(c.billing_address) + '"></div>' +
+    '<div class="field"><label>Ship-to address</label><input id="cShip" value="' + esc(c.ship_address) + '"></div>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Account owner</label><input id="cOwner" value="' + esc(c.owner) + '" placeholder="who runs this account"></div>' +
+      '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="cActive" type="checkbox"' + (c.active ? ' checked' : '') + '> Active</label>' +
+    '</div>' +
+    '<div class="field"><label>Notes</label><input id="cNotes" value="' + esc(c.notes) + '"></div>' +
+
+    (isNew ? '<p class="note">Save the company first, then add the people at it.</p>'
+           : '<div class="section-head" style="margin-top:22px"><h2 style="font-size:16px">Contacts</h2>' +
+             '<div class="note-sub">Consent is what campaigns check before sending. An order is a business relationship, not marketing consent.</div></div>' +
+             '<div id="ctList"></div>' +
+             '<button class="btn small" id="ctNew" style="margin-top:8px">+ Contact</button>') +
+
+    '<div class="form-err" id="mErr"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:16px">' +
+      (isNew || c.orders ? '' : '<button class="btn danger" id="cDel">Delete</button>') +
+      '<button class="btn primary" id="cSave" style="flex:1;justify-content:center">Save company</button>' +
+    '</div>' +
+    (!isNew && c.orders ? '<p class="note" style="margin-top:8px">This company has ' + c.orders + ' order' + (c.orders === 1 ? '' : 's') + ' against it, so it cannot be deleted. Untick Active to retire it.</p>' : ''));
+
+  function paintContacts() {
+    if (isNew) return;
+    var rows = contactsOf(c.id);
+    $('ctList').innerHTML = rows.length
+      ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Consent</th><th></th></tr></thead><tbody>' +
+        rows.map(function (ct) {
+          return '<tr class="click" data-ct="' + esc(ct.id) + '">' +
+            '<td><b>' + esc(ct.name || '—') + '</b></td>' +
+            '<td>' + esc(ct.email || '—') + '</td>' +
+            '<td>' + esc(ct.role || '—') + '</td>' +
+            '<td>' + (ct.unsubscribed ? '<span style="color:var(--bad)">unsubscribed</span>'
+                     : ct.consent ? '<span style="color:var(--good,green)">yes</span>' : 'no') + '</td>' +
+            '<td class="num"><button class="btn small" data-del="' + esc(ct.id) + '">Remove</button></td>' +
+          '</tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<div class="empty" style="padding:14px 0">Nobody recorded at this company yet.</div>';
+
+    $('ctList').querySelectorAll('tr[data-ct]').forEach(function (tr) {
+      tr.onclick = function (ev) {
+        if (ev.target.dataset.del) return;
+        editContact(c.id, A.contacts.filter(function (x) { return x.id === tr.dataset.ct; })[0], paintContacts);
+      };
+    });
+    $('ctList').querySelectorAll('button[data-del]').forEach(function (b) {
+      b.onclick = function (ev) {
+        ev.stopPropagation();
+        b.disabled = true;
+        api('adminContactDelete', { id: b.dataset.del }).then(function () {
+          A.contacts = A.contacts.filter(function (x) { return x.id !== b.dataset.del; });
+          paintContacts();
+          toast('Contact removed');
+        }).catch(function (e) { b.disabled = false; $('mErr').textContent = e.message; });
+      };
+    });
+  }
+  paintContacts();
+
+  if (!isNew) {
+    $('ctNew').onclick = function () { editContact(c.id, null, paintContacts); };
+    if ($('cDel')) {
+      $('cDel').onclick = function () {
+        api('adminCompanyDelete', { id: c.id })
+          .then(function () { closeDrawer(); toast('Company deleted'); loadCompanies(); })
+          .catch(function (e) { $('mErr').textContent = e.message; });
+      };
+    }
+  }
+
+  $('cSave').onclick = function () {
+    var gstin = $('cGstin').value.trim().toUpperCase();
+    if (gstin && gstin.length !== 15) { $('mErr').textContent = 'A GSTIN is 15 characters. Leave it blank if you do not have it yet.'; return; }
+    $('cSave').disabled = true;
+    api('adminCompanySave', { actor: 'admin', company: {
+      id: c.id, name: $('cName').value.trim(), gstin: gstin,
+      phone: $('cPhone').value.trim(), email: $('cEmail').value.trim(),
+      billing_address: $('cBill').value.trim(), ship_address: $('cShip').value.trim(),
+      state_code: $('cState').value.trim(), owner: $('cOwner').value.trim(),
+      notes: $('cNotes').value.trim(), active: $('cActive').checked
+    } }).then(function () { closeDrawer(); toast('Company saved'); loadCompanies(); })
+      .catch(function (e) { $('cSave').disabled = false; $('mErr').textContent = e.message; });
+  };
+}
+
+function editContact(companyId, ct, done) {
+  var isNew = !ct;
+  ct = ct || { id: '', name: '', email: '', phone: '', role: '', consent: false, unsubscribed: false, consent_source: '', consent_ts: '' };
+  openDrawer(
+    '<h2 style="margin:0 0 14px">' + (isNew ? 'New contact' : esc(ct.name || ct.email)) + '</h2>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Name</label><input id="tName" value="' + esc(ct.name) + '"></div>' +
+      '<div class="field"><label>Email</label><input id="tEmail" value="' + esc(ct.email) + '"></div>' +
+      '<div class="field"><label>Phone</label><input id="tPhone" value="' + esc(ct.phone) + '"></div>' +
+      '<div class="field"><label>Role</label><input id="tRole" value="' + esc(ct.role) + '" placeholder="buyer, finance, admin"></div>' +
+    '</div>' +
+    '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin:6px 0"><input id="tConsent" type="checkbox"' + (ct.consent ? ' checked' : '') + '> Consented to marketing email</label>' +
+    '<div class="field"><label>How consent was given</label><input id="tSource" value="' + esc(ct.consent_source) + '" placeholder="signed form, replied opting in, asked at a meeting"></div>' +
+    (ct.consent_ts ? '<p class="note">Consent recorded ' + esc(ct.consent_ts) + '.</p>' : '') +
+    '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin:6px 0"><input id="tUnsub" type="checkbox"' + (ct.unsubscribed ? ' checked' : '') + '> Unsubscribed</label>' +
+    '<p class="note">Campaigns skip anyone without consent, and anyone unsubscribed, whatever else is set. Under the DPDP Act a record of when and how consent was given is the point, not the tick itself.</p>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:14px">' +
+      '<button class="btn primary" id="tSave" style="flex:1;justify-content:center">Save contact</button>' +
+    '</div>');
+
+  $('tSave').onclick = function () {
+    $('tSave').disabled = true;
+    api('adminContactSave', { actor: 'admin', contact: {
+      id: ct.id, company_id: companyId,
+      name: $('tName').value.trim(), email: $('tEmail').value.trim(),
+      phone: $('tPhone').value.trim(), role: $('tRole').value.trim(),
+      consent: $('tConsent').checked, consent_source: $('tSource').value.trim(),
+      unsubscribed: $('tUnsub').checked
+    } }).then(function () {
+      closeDrawer(); toast('Contact saved');
+      api('adminCompanies').then(function (res) {
+        A.companies = res.companies; A.contacts = res.contacts;
+        A.unlinked = { names: res.unlinked_names, orders: res.unlinked_orders };
+        if (done) { editCompany(A.companies.filter(function (x) { return x.id === companyId; })[0]); }
+      });
+    }).catch(function (e) { $('tSave').disabled = false; $('mErr').textContent = e.message; });
   };
 }
 
