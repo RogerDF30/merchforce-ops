@@ -6,9 +6,31 @@
  * Idempotent: refuses to run twice unless {force:true}.
  */
 
-function setupRun() { // editor-friendly entry point (runs as owner, so pass the stored admin key)
-  var res = setup_({ key: SETUP_KEY, force: true, adminKey: props_().getProperty('ADMIN_PASS') || '' });
+/**
+ * Editor-friendly entry point (runs as owner, so pass the stored admin key).
+ * seed:false is deliberate. This is a working backend, not a demo, and the
+ * guard in setup_ is `p.seed !== false` — omitting it seeds the demo catalogue
+ * into any empty Products tab, which is how the first run here ended up with
+ * Merchforce's demo products in it.
+ */
+function setupRun() {
+  var res = setup_({ key: SETUP_KEY, force: true, seed: false,
+                     adminKey: props_().getProperty('ADMIN_PASS') || '' });
   Logger.log(JSON.stringify(res, null, 2));
+}
+
+/**
+ * One-shot: clear the demo catalogue seeded on first setup. Leaves headers,
+ * settings, users and the audit log alone. Run from the editor.
+ */
+function purgeSeedData() {
+  var ss = SpreadsheetApp.openById(props_().getProperty('SHEET_ID'));
+  ['Products', 'PriceTiers', 'Brands', 'Events', 'StockLog'].forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (sh && sh.getLastRow() > 1) sh.deleteRows(2, sh.getLastRow() - 1);
+  });
+  CacheService.getScriptCache().remove('catalog_v1');
+  Logger.log('Seed data cleared. Catalogue is now empty.');
 }
 
 function setup_(p) {
