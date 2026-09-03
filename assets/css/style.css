@@ -471,3 +471,13 @@ a { color: var(--accent); text-decoration: none; }
 .gsearch input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .gs-panel { max-height: 480px; }
 .gs-group { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 10px 12px 4px; background: var(--bg, #fafafa); border-bottom: 1px solid var(--line); }
+
+/* filter bars and the enquiry page */
+.fbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+.fbar input { flex: 1 1 220px; min-width: 180px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; outline: none; background: #fff; }
+.fbar input:focus { border-color: var(--accent); }
+.fbar select { padding: 8px 30px 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-weight: 600; font-size: 13px; color: var(--ink-2); max-width: 260px; }
+.enq-page { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+.enq-side { position: sticky; top: 16px; }
+@media (max-width: 1000px) { .enq-page { grid-template-columns: 1fr; } .enq-side { position: static; } }
+.ppick.inline { position: static; box-shadow: none; margin: 0 0 12px; max-height: 300px; }

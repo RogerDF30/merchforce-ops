@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v25';
+var BUILD = 'v26';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -277,6 +277,54 @@ function loadEnquiries() { A.loaded.enquiries = true; $('p-enquiries').innerHTML
 function loadOrders() { A.loaded.orders = true; $('p-orders').innerHTML = '<div class="spin"></div>'; ensureRequests().then(renderOrders); }
 function loadMine() { A.loaded.mine = true; $('p-mine').innerHTML = '<div class="spin"></div>'; ensureRequests().then(renderMine); }
 
+/* ---------- filter bars ---------- */
+/* defs: [{key, label, options:[[value,label],...]}], state: object the values live in.
+   Renders selects (and an optional text box) and calls onChange after any change. */
+A.filters = A.filters || {};
+function filterState(name) { return A.filters[name] = A.filters[name] || {}; }
+function filterBar(name, defs, withText) {
+  var st = filterState(name);
+  return '<div class="fbar" id="fb-' + name + '">' +
+    (withText ? '<input data-fk="q" placeholder="' + esc(withText) + '" value="' + esc(st.q || '') + '">' : '') +
+    defs.map(function (d) {
+      return '<select data-fk="' + d.key + '" title="' + esc(d.label) + '"><option value="">' + esc(d.label) + ': all</option>' +
+        d.options.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(st[d.key] || '') === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+    }).join('') +
+    (Object.keys(st).some(function (k) { return st[k]; }) ? '<button class="btn ghost small" data-fk="clear">Clear</button>' : '') +
+    '</div>';
+}
+function wireFilterBar(name, onChange) {
+  var st = filterState(name), bar = $('fb-' + name);
+  if (!bar) return;
+  bar.querySelectorAll('select[data-fk]').forEach(function (s) { s.onchange = function () { st[s.dataset.fk] = s.value; onChange(); }; });
+  var q = bar.querySelector('input[data-fk="q"]');
+  if (q) q.oninput = function () { st.q = q.value; onChange(true); };
+  var clr = bar.querySelector('button[data-fk="clear"]');
+  if (clr) clr.onclick = function () { Object.keys(st).forEach(function (k) { delete st[k]; }); onChange(); };
+}
+function uniq(list) { var seen = {}; return list.filter(function (v) { if (!v || seen[v]) return false; seen[v] = 1; return true; }).sort(); }
+
+/* Enquiry / order filters shared by the three views. */
+function requestFilterDefs(rows, kind) {
+  var statuses = kind === 'order' ? ORDER_STAGES.concat(['Cancelled']) : ENQUIRY_STAGES.concat(['Rejected', 'Declined', 'Expired', 'Cancelled']);
+  var present = {}; rows.forEach(function (r) { present[r.status] = 1; });
+  return [
+    { key: 'status', label: 'Status', options: statuses.filter(function (s) { return present[s]; }).map(function (s) { return [s, s]; }) },
+    { key: 'owner', label: 'Owner', options: uniq(rows.map(function (r) { return r.assigned_name; })).map(function (n) { return [n, n]; }).concat([['__none', 'Unassigned']]) },
+    { key: 'account', label: 'Account', options: uniq(rows.map(function (r) { return r.company; })).map(function (n) { return [n, n]; }) }
+  ];
+}
+function applyRequestFilters(name, rows) {
+  var st = filterState(name), q = (st.q || '').toLowerCase();
+  return rows.filter(function (r) {
+    if (st.status && r.status !== st.status) return false;
+    if (st.owner === '__none' ? r.assigned_name : (st.owner && r.assigned_name !== st.owner)) return false;
+    if (st.account && r.company !== st.account) return false;
+    if (q && [r.id, r.company, r.contact, r.email, r.po_number, r.pi_number].concat(r.lines.map(function (l) { return l.sku + ' ' + l.name; })).join(' ').toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+}
+
 /* ---------- shared table ---------- */
 function requestRows(tbId, rows, kind) {
   var tb = $(tbId);
@@ -331,10 +379,12 @@ function renderEnquiries() {
       '<button class="btn small" id="eReload">Refresh</button>' +
       '<button class="btn primary small" id="rNew" style="margin-left:8px">+ Enquiry</button></div>' +
     '<p class="note" style="margin-top:-6px">An enquiry runs from New to PI Accepted. When the client\'s purchase order lands it moves to Orders.</p>' +
+    filterBar('enq', requestFilterDefs(rows, 'enquiry'), 'search id, account, contact, product') +
     requestTable('eRows', 'enquiry');
-  requestRows('eRows', rows, 'enquiry');
+  requestRows('eRows', applyRequestFilters('enq', rows), 'enquiry');
+  wireFilterBar('enq', function (typing) { if (typing) requestRows('eRows', applyRequestFilters('enq', rows), 'enquiry'); else renderEnquiries(); });
   $('eReload').onclick = loadRequests;
-  $('rNew').onclick = newRequest;
+  $('rNew').onclick = function () { newRequest(); };
   $('enqSeg').querySelectorAll('button').forEach(function (b) { b.onclick = function () { A.enqView = b.dataset.v; renderEnquiries(); }; });
 }
 
@@ -358,8 +408,10 @@ function renderOrders() {
       '</div><span class="sp"></span>' +
       '<button class="btn small" id="oReload">Refresh</button></div>' +
     '<p class="note" style="margin-top:-6px">Converted enquiries: a purchase order is on file. Active runs from PO Received to Dispatched; Delivered, Closed and Cancelled are completed.</p>' +
+    filterBar('ord', requestFilterDefs(rows, 'order'), 'search id, account, PO number, product') +
     requestTable('oRows', 'order');
-  requestRows('oRows', rows, 'order');
+  requestRows('oRows', applyRequestFilters('ord', rows), 'order');
+  wireFilterBar('ord', function (typing) { if (typing) requestRows('oRows', applyRequestFilters('ord', rows), 'order'); else renderOrders(); });
   $('oReload').onclick = loadRequests;
   $('ordSeg').querySelectorAll('button').forEach(function (b) { b.onclick = function () { A.orderView = b.dataset.v; renderOrders(); }; });
 }
@@ -378,14 +430,19 @@ function renderMine() {
     '<div class="stat-row">' + stat(enq.length, 'open enquiries') + stat(ord.length, 'active orders') +
       stat(enq.filter(function (r) { return r.status === 'New'; }).length, 'need a decision') +
       stat(enq.filter(function (r) { return r.status === 'PI Sent'; }).length, 'PI awaiting reply') + '</div>' +
+    filterBar('mine', [{ key: 'status', label: 'Status', options: uniq(mine.map(function (r) { return r.status; })).map(function (s) { return [s, s]; }) }], 'search id, account, contact, product') +
     '<h3 style="margin:14px 0 6px">Open enquiries</h3>' + requestTable('mRowsE', 'enquiry') +
     '<h3 style="margin:18px 0 6px">Active orders</h3>' + requestTable('mRowsO', 'order') +
     (closed.length ? '<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--ink-2)">Completed and closed (' + closed.length + ')</summary>' + requestTable('mRowsC', 'enquiry') + '</details>' : '');
-  requestRows('mRowsE', enq, 'enquiry');
-  requestRows('mRowsO', ord, 'order');
-  if (closed.length) requestRows('mRowsC', closed, 'enquiry');
+  function paintMine() {
+    requestRows('mRowsE', applyRequestFilters('mine', enq), 'enquiry');
+    requestRows('mRowsO', applyRequestFilters('mine', ord), 'order');
+    if (closed.length) requestRows('mRowsC', applyRequestFilters('mine', closed), 'enquiry');
+  }
+  paintMine();
+  wireFilterBar('mine', function (typing) { if (typing) paintMine(); else renderMine(); });
   $('mReload').onclick = loadRequests;
-  $('rNew2').onclick = newRequest;
+  $('rNew2').onclick = function () { newRequest(); };
 }
 
 /* ---------- generic dropdown picker (company, contact, anything) ---------- */
@@ -468,11 +525,16 @@ function addrLines(a) {
 function renderCompanies() {
   A.accountOpen = '';
   var u = A.unlinked || { names: 0, orders: 0 };
-  var q = (A.accountQuery || '').toLowerCase();
-  var rows = A.companies.filter(function (c) { return !q || (c.name + ' ' + c.gstin + ' ' + (c.owner || '') + ' ' + (c.bill && c.bill.city || '')).toLowerCase().indexOf(q) >= 0; });
+  var st = filterState('acc'), q = (st.q || '').toLowerCase();
+  var rows = A.companies.filter(function (c) {
+    if (st.owner === '__none' ? c.owner : (st.owner && c.owner !== st.owner)) return false;
+    if (st.active === 'yes' && !c.active) return false;
+    if (st.active === 'no' && c.active) return false;
+    if (st.state && (c.bill && c.bill.state) !== st.state) return false;
+    return !q || (c.name + ' ' + c.gstin + ' ' + (c.owner || '') + ' ' + (c.bill && c.bill.city || '')).toLowerCase().indexOf(q) >= 0;
+  });
   $('p-accounts').innerHTML =
     '<div class="panel-head"><h2>Accounts</h2>' +
-      '<input id="coFind" placeholder="find an account" value="' + esc(A.accountQuery || '') + '" style="width:240px;margin-left:14px">' +
       '<span class="sp"></span>' +
       '<button class="btn primary small" id="coNew">+ Account</button></div>' +
     '<p class="note" style="margin-top:-6px">Customer accounts, the people at them, and what has been said and filed about each. Enquiries and orders attach to an account.</p>' +
@@ -481,6 +543,11 @@ function renderCompanies() {
         ' are not linked to an account.</strong> Import groups them by name, creates one account each and lifts the contact from the most recent one. It is safe to run more than once. ' +
         '<button class="btn small" id="coImport" style="margin-left:8px">Import from enquiries</button><span id="coImportOut" class="note" style="margin-left:10px"></span></div>'
       : '') +
+    filterBar('acc', [
+      { key: 'owner', label: 'Owner', options: uniq(A.companies.map(function (c) { return c.owner; })).map(function (n) { return [n, n]; }).concat([['__none', 'No owner']]) },
+      { key: 'state', label: 'State', options: uniq(A.companies.map(function (c) { return c.bill && c.bill.state; })).map(function (n) { return [n, n]; }) },
+      { key: 'active', label: 'Status', options: [['yes', 'Active'], ['no', 'Inactive']] }
+    ], 'search name, GSTIN, owner, city') +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th>Account</th><th>City</th><th>Owner</th><th class="num">Contacts</th><th class="num">Enquiries</th><th class="num">Value</th><th>Active</th>' +
     '</tr></thead><tbody id="coRows"></tbody></table></div>';
@@ -498,7 +565,11 @@ function renderCompanies() {
     tb.appendChild(tr);
   });
   $('coNew').onclick = function () { editCompany(null); };
-  $('coFind').oninput = function () { A.accountQuery = this.value; renderCompanies(); $('coFind').focus(); $('coFind').setSelectionRange(this.value.length, this.value.length); };
+  wireFilterBar('acc', function (typing) {
+    if (!typing) { renderCompanies(); return; }
+    var inp = document.querySelector('#fb-acc input'), pos = inp.selectionStart;
+    renderCompanies(); var again = document.querySelector('#fb-acc input'); again.focus(); again.setSelectionRange(pos, pos);
+  });
   if ($('coImport')) $('coImport').onclick = function () {
     $('coImport').disabled = true; $('coImportOut').textContent = 'Importing…';
     api('adminCompanyImport').then(function (res) { toast('Imported ' + res.created + ' account' + (res.created === 1 ? '' : 's')); loadCompanies(); })
@@ -1101,25 +1172,41 @@ function renderCatalog() {
       stat(lowCount, 'At / below reorder point') +
     '</div>' +
     '<div class="panel-head"><h2>Catalog</h2><span class="sp"></span>' +
-      '<input id="cSearch" placeholder="Search…" style="padding:8px 12px;border:1px solid var(--line);border-radius:10px">' +
       '<button class="btn small" id="cExport">Export CSV</button>' +
       '<button class="btn primary small" id="cNew">+ Product</button></div>' +
+    filterBar('cat', [
+      { key: 'brand', label: 'Brand', options: A.brands.map(function (b) { return [b.id, b.name]; }) },
+      { key: 'category', label: 'Category', options: uniq(A.products.map(function (p) { return p.category; })).map(function (c) { return [c, c]; }) },
+      { key: 'stock', label: 'Stock', options: [['in', 'In stock'], ['low', 'At / below reorder point'], ['out', 'Out of stock']] },
+      { key: 'visible', label: 'Visibility', options: [['yes', 'Published'], ['no', 'Hidden']] }
+    ], 'search SKU, name, HSN') +
+    '<div class="note" id="cCount" style="margin:-4px 0 8px"></div>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th></th><th>SKU</th><th>Product</th><th>Brand</th><th class="num">MOQ</th><th class="num">MRP</th><th class="num">From</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">ATP</th><th>Visible</th>' +
     '</tr></thead><tbody id="cRows"></tbody></table></div>';
   $('cNew').onclick = function () { editProduct(null); };
   $('cExport').onclick = exportProducts;
-  $('cSearch').oninput = paintCatalogRows;
+  wireFilterBar('cat', function (typing) { if (typing) paintCatalogRows(); else renderCatalog(); });
   paintCatalogRows();
 }
 
 function paintCatalogRows() {
-  var q = ($('cSearch').value || '').toLowerCase();
+  var st = filterState('cat'), q = (st.q || '').toLowerCase();
   var tb = $('cRows');
   tb.innerHTML = '';
-  A.products.filter(function (p) {
-    return !q || (p.sku + ' ' + p.name + ' ' + p.brand_id + ' ' + p.category).toLowerCase().indexOf(q) >= 0;
-  }).forEach(function (p) {
+  var shown = A.products.filter(function (p) {
+    if (st.brand && p.brand_id !== st.brand) return false;
+    if (st.category && p.category !== st.category) return false;
+    if (st.visible === 'yes' && !p.visible) return false;
+    if (st.visible === 'no' && p.visible) return false;
+    if (st.stock === 'out' && p.atp > 0) return false;
+    if (st.stock === 'low' && !(p.atp <= p.reorder_point)) return false;
+    if (st.stock === 'in' && !(p.atp > 0 && p.atp > p.reorder_point)) return false;
+    return !q || (p.sku + ' ' + p.name + ' ' + p.hsn + ' ' + brandName(p.brand_id) + ' ' + p.category).toLowerCase().indexOf(q) >= 0;
+  });
+  $('cCount').textContent = shown.length === A.products.length ? A.products.length + ' products' : shown.length + ' of ' + A.products.length + ' products';
+  if (!shown.length) tb.innerHTML = '<tr><td colspan="11"><div class="empty" style="padding:26px 0">No product matches these filters.</div></td></tr>';
+  shown.forEach(function (p) {
     var low = p.atp <= p.reorder_point;
     var from = p.tiers.length ? p.tiers[p.tiers.length - 1].price : 0;
     var tr = document.createElement('tr');
@@ -1530,42 +1617,51 @@ function openNewRequest(staff, presetCompany, presetProduct) {
   var catalogue = A.products.filter(function (p) { return p.visible; });
   var companies = A.companies.filter(function (c) { return c.active; });
 
-  openDrawer(
-    '<h2 style="margin:0 0 4px">New enquiry</h2>' +
-    '<p class="note" style="margin:0 0 14px">Raised on the customer\'s behalf. It enters the flow at <b>New</b>: accept it, build the quotation, the PI goes out with the client link, and the purchase order turns it into an order.</p>' +
-
-    '<div class="f2">' +
-      '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(A.user ? A.user.name : actorName()) + '"' + (A.user ? ' readonly' : '') + ' placeholder="your name — goes on the enquiry and the audit log"></div>' +
-      '<div class="field"><label>Follow-up owner</label><select id="nOwner">' + staffOptions(staff, me.email || '', 'Unassigned') + '</select></div>' +
-    '</div>' +
-
-    '<div class="section-head" style="margin-top:6px"><h2 style="font-size:15px">Customer</h2></div>' +
-    pickerField('nCompany', 'Account *', 'pick an account, or type a new name') +
-    '<div class="note" id="nCompanyHint" style="margin:-8px 0 10px"></div>' +
-    '<div class="f2">' +
-      pickerField('nContact', 'Contact name *', 'pick a contact, or type a name') +
-      '<div class="field"><label>Contact email *</label><input id="nEmail" type="email"></div>' +
-      '<div class="field"><label>Phone</label><input id="nPhone"></div>' +
-      '<div class="field"><label>GSTIN</label><input id="nGstin" maxlength="15"></div>' +
-      '<div class="field"><label>Ship-to address</label><input id="nShip"></div>' +
-      '<div class="field"><label>Place of supply</label><select id="nPos">' + stateOptions('', 'Choose a state') + '</select></div>' +
-    '</div>' +
-
-    '<div class="section-head" style="margin-top:14px"><h2 style="font-size:15px">Lines</h2>' +
-      '<div class="note-sub">Price is the tier the quantity reaches. Change it later in the quotation builder, not here.</div></div>' +
-    '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">' +
-      '<div class="field" style="flex:1;margin:0"><label>Product</label>' +
-        '<div class="ppick-wrap"><input id="nSku" placeholder="type a SKU or name" autocomplete="off"><div class="ppick" id="nSkuPick" hidden></div></div></div>' +
-      '<div class="field" style="width:110px;margin:0"><label>Qty</label><input id="nQty" type="number" min="1"></div>' +
-      '<button class="btn small" id="nAdd" style="height:40px">Add</button>' +
-    '</div>' +
-    '<div id="nLines"></div>' +
-
-    '<div class="field" style="margin-top:14px"><label>Notes</label><input id="nNotes" placeholder="anything the quotation builder should know"></div>' +
-    '<div class="form-err" id="mErr"></div>' +
-    '<div style="display:flex;gap:10px;margin-top:14px">' +
-      '<button class="btn primary" id="nSave" style="flex:1;justify-content:center">Raise enquiry</button>' +
-    '</div>');
+  goTab('enquiries');
+  A.loaded.enquiries = true;
+  closeDrawer();
+  $('p-enquiries').innerHTML =
+    '<div style="margin-bottom:10px"><a href="#" id="nBack" style="font-weight:700">← Enquiries</a></div>' +
+    '<div class="panel-head"><h2 style="margin:0">New enquiry</h2><span class="sp"></span>' +
+      '<button class="btn small" id="nCancel">Cancel</button><button class="btn primary small" id="nSaveTop" style="margin-left:8px">Raise enquiry</button></div>' +
+    '<p class="note" style="margin-top:-6px">Raised on the customer\'s behalf. It enters the flow at <b>New</b>: accept it, build the quotation, the PI goes out with the client link, and the purchase order turns it into an order.</p>' +
+    '<div class="enq-page">' +
+      '<div>' +
+        '<div class="card-block" style="margin-bottom:16px"><h3>Customer</h3>' +
+          pickerField('nCompany', 'Account *', 'pick an account, or type a new name') +
+          '<div class="note" id="nCompanyHint" style="margin:-8px 0 10px"></div>' +
+          '<div class="f2">' +
+            pickerField('nContact', 'Contact name *', 'pick a contact, or type a name') +
+            '<div class="field"><label>Contact email *</label><input id="nEmail" type="email"></div>' +
+            '<div class="field"><label>Phone</label><input id="nPhone"></div>' +
+            '<div class="field"><label>GSTIN</label><input id="nGstin" maxlength="15"></div>' +
+            '<div class="field"><label>Ship-to address</label><input id="nShip"></div>' +
+            '<div class="field"><label>Place of supply</label><select id="nPos">' + stateOptions('', 'Choose a state') + '</select></div>' +
+          '</div></div>' +
+        '<div class="card-block"><h3>Lines</h3>' +
+          '<p class="note-sub" style="margin:-6px 0 10px">Price is the tier the quantity reaches. Change it later in the quotation builder, not here.</p>' +
+          '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px">' +
+            '<div class="field" style="flex:1;margin:0"><label>Product</label>' +
+              '<div class="ppick-wrap"><input id="nSku" placeholder="type a SKU, name, brand or category" autocomplete="off"></div></div>' +
+            '<div class="field" style="width:110px;margin:0"><label>Qty</label><input id="nQty" type="number" min="1"></div>' +
+            '<button class="btn small" id="nAdd" style="height:40px">Add</button>' +
+          '</div>' +
+          '<div class="ppick inline" id="nSkuPick" hidden></div>' +
+          '<div id="nLines"></div></div>' +
+      '</div>' +
+      '<div><div class="card-block enq-side">' +
+        '<h3>Enquiry</h3>' +
+        '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(A.user ? A.user.name : actorName()) + '"' + (A.user ? ' readonly' : '') + ' placeholder="your name — goes on the enquiry and the audit log"></div>' +
+        '<div class="field"><label>Follow-up owner</label><select id="nOwner">' + staffOptions(staff, me.email || '', 'Unassigned') + '</select></div>' +
+        '<div class="field"><label>Notes</label><textarea id="nNotes" placeholder="anything the quotation builder should know" style="min-height:70px"></textarea></div>' +
+        '<div id="nSummary" class="note" style="margin:0 0 10px"></div>' +
+        '<div class="form-err" id="mErr"></div>' +
+        '<button class="btn primary" id="nSave" style="width:100%;justify-content:center">Raise enquiry</button>' +
+      '</div></div>' +
+    '</div>';
+  $('nBack').onclick = function (ev) { ev.preventDefault(); renderEnquiries(); };
+  $('nCancel').onclick = function () { renderEnquiries(); };
+  $('nSaveTop').onclick = function () { $('nSave').click(); };
 
   function findCompany(name) {
     var k = String(name || '').trim().toLowerCase();
@@ -1614,7 +1710,8 @@ function openNewRequest(staff, presetCompany, presetProduct) {
 
   function paintLines() {
     if (!lines.length) {
-      $('nLines').innerHTML = '<div class="empty" style="padding:14px 0">No lines yet.</div>';
+      $('nLines').innerHTML = '<div class="empty" style="padding:14px 0">No lines yet. Search a product above and add it.</div>';
+      $('nSummary').textContent = 'No lines yet.';
       return;
     }
     var total = 0;
@@ -1638,6 +1735,7 @@ function openNewRequest(staff, presetCompany, presetProduct) {
       '</tbody><tfoot><tr><td colspan="4" style="text-align:right;font-weight:700">Estimated total</td>' +
       '<td class="num"><b>' + inr(total) + '</b></td><td colspan="2"></td></tr></tfoot></table></div>';
 
+    $('nSummary').innerHTML = '<b>' + lines.length + ' line' + (lines.length === 1 ? '' : 's') + '</b> · ' + qty(lines.reduce(function (s, l) { return s + l.qty; }, 0)) + ' units · estimated <b>' + inr(total) + '</b> ex-GST';
     $('nLines').querySelectorAll('input[data-i]').forEach(function (inp) {
       inp.onchange = function () {
         var i = Number(inp.dataset.i), p = findProduct(lines[i].sku), v = Math.floor(Number(inp.value) || 0);
@@ -1682,7 +1780,7 @@ function openNewRequest(staff, presetCompany, presetProduct) {
 
     var c = findCompany(company);
     rememberActor(actor);
-    $('nSave').disabled = true;
+    $('nSave').disabled = true; $('nSaveTop').disabled = true;
     $('mErr').textContent = '';
     api('adminRequestCreate', {
       actor: actor, company_id: c ? c.id : '',
@@ -1692,11 +1790,10 @@ function openNewRequest(staff, presetCompany, presetProduct) {
       assigned_to: $('nOwner').value,
       lines: lines
     }).then(function (res) {
-      closeDrawer();
       toast('Raised ' + res.request_id);
       if (A.accountOpen) loadCompanies();
       loadRequests();
-    }).catch(function (e) { $('nSave').disabled = false; $('mErr').textContent = e.message; });
+    }).catch(function (e) { $('nSave').disabled = false; $('nSaveTop').disabled = false; $('mErr').textContent = e.message; });
   };
 }
 
