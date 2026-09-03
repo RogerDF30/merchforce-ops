@@ -131,3 +131,43 @@ function seedDemo_() {
     });
   });
 }
+
+/**
+ * One-shot: apply the HSN codes established for the Merchforce catalogue on
+ * 1 Sep 2026 to the matching SKUs here. seedDemo_ predates the hsn column and
+ * does not populate it, so a seeded catalogue has none, and a GST invoice
+ * needs one. Sourced from the CS Product Master, matched on Final SKU Code.
+ * Run from the editor. Safe to re-run: it only fills, never overwrites.
+ */
+function importHsn() {
+  var MAP = {
+    '1953184': '960810', '5324866819': '8504', '5324866820': '8504',
+    '6111990716': '85076000', '8902298161024': '960830', '9000017248': '960810',
+    '9578398628': '8504', 'B0560TI01': '73239390', 'B30906': '61091000',
+    'BT380BLK130': '73239390', 'BT700BLK104': '73239390', 'BTU0500BLK36': '73239390',
+    'CSUN-0064': '96081019', 'CSUN-0124': '96081019', 'CSUN-0276': '482010',
+    'CSUN-1552': '61171090', 'DN3093': '61052010', 'DN3224': '61052010',
+    'IY3820': '61052010', 'PARK-002': '96081019', 'UG 02': '39241090',
+    'UG-DB59': '961700', 'URBAN-294': '73239390', 'URBAN-298': '73239390'
+  };
+  var norm = {};
+  Object.keys(MAP).forEach(function (k) { norm[skuKey_(k)] = MAP[k]; });
+
+  var sh = sheet_('Products');
+  var iHsn = SHEETS.Products.indexOf('hsn') + 1;
+  if (iHsn < 1) { Logger.log('No hsn column. Run setupRun first.'); return; }
+
+  var rows = readRows_('Products');
+  var filled = 0, already = 0, missing = [];
+  rows.forEach(function (r, i) {
+    var want = norm[skuKey_(r.sku)];
+    if (!want) { if (!String(r.hsn || '').trim()) missing.push(String(r.sku)); return; }
+    if (String(r.hsn || '').trim()) { already++; return; }
+    sh.getRange(i + 2, iHsn).setValue(want);
+    filled++;
+  });
+  CacheService.getScriptCache().remove('catalog_v1');
+  Logger.log('HSN filled on ' + filled + ' products, ' + already + ' already had one.');
+  Logger.log('Still without an HSN (' + missing.length + '): ' + missing.join(', '));
+  Logger.log('NOTE: Sheets stores these as numbers, so a leading-zero code such as 0902 would become 902. Format Products!hsn as plain text before entering one.');
+}
