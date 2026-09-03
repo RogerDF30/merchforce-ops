@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v29';
+var BUILD = 'v30';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -86,18 +86,19 @@ function brandName(id) {
 
 function persistSession() {
   try {
-    if (A.session) localStorage.setItem('mf_session', JSON.stringify({ s: A.session, u: A.user }));
+    if (A.session) localStorage.setItem('mf_session', JSON.stringify({ s: A.session, u: A.user, settings: A.settings || null, minutes: A.sessionMinutes || 30, relay: A.relayStatus || null }));
     else localStorage.removeItem('mf_session');
   } catch (e) {}
 }
+/* Returns the cached console state ({settings, user, ...}) when a sign-in is stored, else null. */
 function restoreSession() {
   try {
     var raw = localStorage.getItem('mf_session');
-    if (!raw) return false;
+    if (!raw) return null;
     var d = JSON.parse(raw);
     A.session = d.s || ''; A.user = d.u || null;
-    return !!A.session;
-  } catch (e) { return false; }
+    return A.session ? d : null;
+  } catch (e) { return null; }
 }
 
 /* The tool's own branding (Settings → Branding): header, sign-in screen, tab title.
@@ -127,6 +128,7 @@ function enterConsole(res) {
   $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : 'master key';
   $('lock').hidden = true;
   $('console').hidden = false;
+  persistSession();
   A.loaded = {};
   A.requestsAt = 0; A.requests = [];
   document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.toggle('on', x.dataset.t === 'enquiries'); });
@@ -153,7 +155,7 @@ function signIn() {
   if (!email || !pass) { $('lockErr').textContent = 'Email and password, please.'; return; }
   $('loginBtn').disabled = true;
   $('lockErr').textContent = '';
-  A.session = ''; A.key = '';
+  A.key = '';
   fetch(CONFIG.API_URL, {
     method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow',
     body: JSON.stringify({ action: 'staffLogin', token: CONFIG.API_TOKEN, email: email, password: pass })
@@ -204,17 +206,36 @@ $('useMaster').onclick = function (e) { e.preventDefault(); showMaster(); };
 $('useStaff').onclick = function (e) { e.preventDefault(); showStaff(); };
 if ($('buildTag')) $('buildTag').textContent = BUILD;
 
-// A session survives a reload; the server decides whether it is still live.
-if (restoreSession()) {
-  var restore = function (again) {
-    api('adminUnlock').then(enterConsole).catch(function (e) {
+// A sign-in survives a reload. The console opens straight away from the cached
+// state (no sign-in screen flashing while the backend answers); the backend is
+// then asked to confirm, and only an explicit "expired" takes the person back
+// to the sign-in screen. A network hiccup never signs anyone out.
+(function () {
+  var cached = restoreSession();
+  if (!cached) return;
+  if (cached.settings) {
+    enterConsole({ settings: cached.settings, user: A.user, session_minutes: cached.minutes, relay_status: cached.relay });
+  } else {
+    $('lockMsg').textContent = 'Signing you back in…';
+  }
+  var confirm = function (again) {
+    api('adminUnlock').then(function (res) {
+      // refresh settings and identity quietly; the console is already up
+      A.settings = res.settings; A.relayStatus = res.relay_status || null;
+      if (res.user) A.user = res.user;
+      if (res.session_minutes) A.sessionMinutes = Number(res.session_minutes) || 30;
+      applyBranding(A.settings);
+      $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : 'master key';
+      persistSession();
+      if ($('console').hidden) enterConsole(res);
+    }).catch(function (e) {
       if (/expired|sign in again|bad admin key/i.test(e.message)) { lock('Your sign-in has lapsed. Sign in again.'); return; }
-      if (again) setTimeout(function () { restore(false); }, 1500);
-      else lock('Could not reach the backend: ' + e.message);
+      if (again) setTimeout(function () { confirm(false); }, 2000);
+      else if ($('console').hidden) lock('Could not reach the backend: ' + e.message);
     });
   };
-  restore(true);
-}
+  confirm(true);
+})();
 $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
 $('lockNow').onclick = function () { lock('Signed out.'); };
 
