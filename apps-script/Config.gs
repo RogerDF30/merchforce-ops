@@ -16,7 +16,9 @@ var SHEETS = {
   Products:     ['sku', 'name', 'brand_id', 'category', 'subcategory', 'description',
                  'specs', 'image_urls', 'moq', 'gst_rate', 'lead_time',
                  'on_hand', 'reserved', 'safety_stock', 'reorder_point',
-                 'visible', 'show_price', 'created', 'updated', 'mrp', 'hsn'],
+                 'visible', 'show_price', 'created', 'updated', 'mrp', 'hsn',
+                 // phase 5 (appended): how the product is replenished
+                 'supply_mode', 'vendor', 'vendor_moq', 'batch_qty'],
   PriceTiers:   ['sku', 'min_qty', 'unit_price', 'gst'],
   Requests:     ['request_id', 'created', 'status', 'company', 'contact', 'email',
                  'phone', 'gstin', 'notes', 'user_email', 'total_est',
@@ -33,6 +35,9 @@ var SHEETS = {
                  'consent', 'consent_ts', 'consent_source', 'unsubscribed', 'created'],
   Decks:        ['deck_id', 'name', 'skus', 'company_id', 'company', 'pdf_url', 'pptx_url',
                  'folder_id', 'created_by', 'created', 'sent_to', 'last_sent'],
+  // Supply orders: kind 'make' = a production run, 'buy' = a vendor purchase.
+  Supply:       ['so_id', 'kind', 'sku', 'name', 'qty', 'vendor', 'status', 'expected', 'ref',
+                 'note', 'created_by', 'created', 'updated', 'received_qty', 'received'],
   RequestLines: ['request_id', 'line', 'sku', 'name', 'qty', 'unit_price', 'line_total',
                  'list_price', 'gst', 'hsn'],
   Shipments:    ['request_id', 'shipment_no', 'ship_date', 'carrier', 'tracking',
@@ -81,6 +86,7 @@ var DEFAULT_SETTINGS = {
   co_bank: '', co_terms: '', co_logo_url: '', co_sign_url: '',
   pi_prefix: 'PI', pi_validity_days: '15',
   session_minutes: '30',        // staff sign-in lapses after this much inactivity
+  reorder_alert: 'off',         // off | daily: email notify_email when products fall below their reorder point
   site_url: '',   // where order.html lives, for links in emails
   primary_color: '#1a1f36',
   // Supplier stock sync: the supplier keeps managing stock in their OWN

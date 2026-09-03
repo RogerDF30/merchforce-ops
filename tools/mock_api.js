@@ -31,8 +31,10 @@ const db = {
     subcategory: p.sub || '', description: p.desc, specs: (p.specs || []).join('|'),
     image_urls: p.image || '', moq: p.moq, gst_rate: 18, hsn: p.hsn || '', mrp: p.mrp || '', lead_time: p.lead,
     on_hand: p.stock, reserved: 0, safety_stock: Math.round(p.stock * 0.03),
-    reorder_point: Math.round(p.stock * 0.1), visible: 'TRUE', show_price: 'TRUE'
+    reorder_point: Math.round(p.stock * 0.1), visible: 'TRUE', show_price: 'TRUE',
+    supply_mode: '', vendor: '', vendor_moq: '', batch_qty: ''
   })),
+  supply: [],
   tiers: seed.products.flatMap(p => (p.tiers || []).map(t => ({ sku: p.sku, min_qty: t[0], unit_price: t[1] }))),
   requests: [], lines: [], users: [], events: [], shipments: [], seq: 0
 };
@@ -65,6 +67,24 @@ const db = {
   mk(14, 'PI Accepted', 'Vertex Labs', 'Rahul Nair', 'rahul@vertex.example', [['UG 02', 250]]);
   mk(40, 'Delivered', 'Origin Works', 'Dev Patel', 'dev@origin.example', [['DN3224', 500]]);
   mk(70, 'Rejected', 'Halo Fintech', 'Ishita Rao', 'ishita@halo.example', [['PARK-002', 100]]);
+  mk(6, 'PO Received', 'Kestrel Media', 'Anita Joseph', 'anita@kestrel.example', [['URBAN-294', 120], ['UG 02', 60]]);
+  mk(30, 'In Production', 'Marlow & Co', 'Vikram Sen', 'vikram@marlow.example', [['DN3224', 300]]);
+  db.requests.filter(r => ['PO Received', 'In Production'].includes(r.status)).forEach(r => {
+    r.stock_state = 'deducted';
+    const d = JSON.parse(r.status_dates); d[r.status] = new Date(Date.now() - (r.status === 'In Production' ? 25 : 3) * 864e5).toISOString();
+    r.status_dates = JSON.stringify(d);
+    db.lines.filter(l => l.request_id === r.request_id).forEach(l => { prodOf(l.sku).on_hand -= l.qty; });
+  });
+  // make a few products fall below their reorder point, one of them made in house
+  const low = prodOf('URBAN-294'); if (low) { low.on_hand = Math.min(low.on_hand, low.reorder_point); low.supply_mode = 'make'; low.batch_qty = 100; low.lead_time = '10 days'; }
+  const out = prodOf('B30906'); if (out) { out.on_hand = 0; out.supply_mode = 'buy'; out.vendor = 'Wenger India'; out.vendor_moq = 50; }
+  const pend = prodOf('UG 02'); if (pend) { pend.on_hand = Math.max(0, pend.reorder_point - 5); pend.vendor = 'Urban Gear'; }
+  db.supply.push({ so_id: 'SO-0001', kind: 'buy', sku: 'UG 02', name: nameOf('UG 02'), qty: 200, vendor: 'Urban Gear', status: 'Open',
+    expected: dstr(new Date(Date.now() + 9 * 864e5)), ref: 'PO-1181', note: '', created_by: 'Demo Staffer',
+    created: new Date(Date.now() - 4 * 864e5).toISOString(), updated: new Date().toISOString(), received_qty: 0, received: '' });
+  db.supply.push({ so_id: 'SO-0002', kind: 'make', sku: 'DN3224', name: nameOf('DN3224'), qty: 300, vendor: '', status: 'Planned',
+    expected: dstr(new Date(Date.now() + 14 * 864e5)), ref: '', note: 'Run after the Marlow batch', created_by: 'Demo Staffer',
+    created: new Date(Date.now() - 1 * 864e5).toISOString(), updated: new Date().toISOString(), received_qty: 0, received: '' });
   // reserve stock for the confirmed one
   const conf = db.requests.find(r => r.status === 'PI Accepted');
   if (conf) { conf.stock_state = 'reserved';
@@ -145,7 +165,79 @@ function setStatus(r, status) {
   return null;
 }
 
+const STAGE_SLA = { 'PO Received': 7, 'In Production': 21, 'Dispatched': 10 };
+function supplyOut(s) { return { id: s.so_id, kind: s.kind, sku: s.sku, name: s.name, qty: s.qty, vendor: s.vendor, status: s.status,
+  expected: s.expected, ref: s.ref, note: s.note, created_by: s.created_by, created: s.created, updated: s.updated, received_qty: s.received_qty, received: s.received }; }
+function lotOf(p) { const mode = p.supply_mode === 'make' ? 'make' : 'buy'; return (mode === 'make' ? Number(p.batch_qty) : Number(p.vendor_moq)) || p.moq || 1; }
+function leadOf(p) { return Number(String(p.lead_time || '').replace(/[^0-9.]/g, '')) || 14; }
+function stockBoard() {
+  const inbound = {};
+  db.supply.filter(s => ['Planned', 'Open'].includes(s.status)).forEach(s => { inbound[s.sku] = (inbound[s.sku] || 0) + Math.max(0, s.qty - s.received_qty); });
+  const reorder = [];
+  db.products.forEach(p => {
+    const a = atp(p), rop = p.reorder_point;
+    if (!(a <= 0 || (rop > 0 && a <= rop))) return;
+    const mode = p.supply_mode === 'make' ? 'make' : 'buy';
+    const rate = (Number(p.sku.length) % 3) * 0.4; // mock consumption
+    const lot = lotOf(p), lead = leadOf(p);
+    const target = Math.ceil(rate * (lead + 30)) + p.safety_stock;
+    const gap = target - a - (inbound[p.sku] || 0);
+    let suggest = 0;
+    if (gap > 0) suggest = Math.max(lot, Math.ceil(gap / lot) * lot); else if (!(inbound[p.sku] || 0) && rop > 0) suggest = lot;
+    reorder.push({ sku: p.sku, name: p.name, brand: p.brand_id, mode, vendor: p.vendor || '', atp: a, on_hand: p.on_hand, reserved: p.reserved,
+      reorder_point: rop, safety_stock: p.safety_stock, rate_per_day: rate, days_cover: rate > 0 ? Math.floor(a / rate) : null,
+      lead_days: lead, lot, inbound: inbound[p.sku] || 0, target, suggest_qty: suggest, covered: gap <= 0 && (inbound[p.sku] || 0) > 0, last_out: '' });
+  });
+  reorder.sort((x, y) => (x.atp <= 0 ? 0 : 1) - (y.atp <= 0 ? 0 : 1) || (x.days_cover ?? 9999) - (y.days_cover ?? 9999));
+  const queue = db.requests.filter(r => ['PO Received', 'In Production', 'Dispatched'].includes(r.status)).map(r => {
+    const o = orderOut(r);
+    const since = new Date(o.status_dates[o.status] || o.created).getTime();
+    const age = Math.floor((Date.now() - since) / 864e5), sla = STAGE_SLA[o.status] || 7;
+    const short = []; let units = 0;
+    o.lines.forEach(l => { units += l.qty; const p = prodOf(l.sku); if (!p) short.push(l.sku + ' (not in catalogue)'); else if (p.on_hand < 0) short.push(l.sku + ' short by ' + Math.abs(p.on_hand)); });
+    return { order: o, id: o.id, company: o.company, status: o.status, po_number: o.po_number, age_days: age, sla_days: sla, overdue: age > sla,
+      lines: o.lines.length, units, shipped: o.shipments.reduce((a, s) => a + s.qty, 0), short };
+  }).sort((x, y) => (y.age_days - y.sla_days) - (x.age_days - x.sla_days));
+  const supply = db.supply.map(supplyOut).reverse();
+  return { ok: true, generated_at: new Date().toLocaleString('en-IN'), measured_over_days: 90, cover_days: 30, reorder, queue, supply,
+    products: db.products.map(p => ({ sku: p.sku, name: p.name, mode: p.supply_mode === 'make' ? 'make' : 'buy', vendor: p.vendor || '', lot: lotOf(p), atp: atp(p), on_hand: p.on_hand,
+      lead_days: leadOf(p), reorder_point: p.reorder_point, safety_stock: p.safety_stock, vendor_moq: Number(p.vendor_moq) || 0, batch_qty: Number(p.batch_qty) || 0, moq: p.moq })),
+    counts: { out_of_stock: reorder.filter(r => r.atp <= 0).length, reorder_due: reorder.length, covered: reorder.filter(r => r.covered).length,
+      queue: queue.length, overdue: queue.filter(r => r.overdue).length, short_orders: queue.filter(r => r.short.length).length,
+      make_open: supply.filter(r => r.kind === 'make' && ['Planned', 'Open'].includes(r.status)).length,
+      buy_open: supply.filter(r => r.kind === 'buy' && ['Planned', 'Open'].includes(r.status)).length,
+      no_reorder_point: db.products.filter(p => !p.reorder_point).length, supply_mode_unset: db.products.filter(p => !p.supply_mode).length },
+    reorder_alert: db.settings.reorder_alert || 'off', notify_email: db.settings.notify_email || '' };
+}
+
 const ACTIONS = {
+  adminStock: () => stockBoard(),
+  adminSupplyFields: b => { const p = prodOf(String(b.sku || '').toUpperCase()) || prodOf(b.sku); if (!p) return { ok: false, error: 'Product not found: ' + b.sku };
+    p.supply_mode = b.supply_mode === 'make' ? 'make' : 'buy'; p.vendor = b.vendor || ''; p.vendor_moq = Number(b.vendor_moq) || ''; p.batch_qty = Number(b.batch_qty) || '';
+    p.reorder_point = Number(b.reorder_point) || 0; p.safety_stock = Number(b.safety_stock) || 0; p.lead_time = b.lead_time || ''; return { ok: true, sku: p.sku }; },
+  adminSupplySave: b => { const d = b.supply || {}; let rec = d.id ? db.supply.find(s => s.so_id === d.id) : null;
+    if (d.id && !rec) return { ok: false, error: 'Supply order not found: ' + d.id };
+    if (!rec) { const p = prodOf(d.sku); if (!p) return { ok: false, error: 'Product not found: ' + d.sku };
+      rec = { so_id: 'SO-' + String(db.supply.length + 1).padStart(4, '0'), kind: d.kind || (p.supply_mode === 'make' ? 'make' : 'buy'), sku: p.sku, name: p.name, qty: 0,
+        vendor: d.vendor !== undefined ? d.vendor : (p.vendor || ''), status: 'Planned', expected: '', ref: '', note: '', created_by: 'Demo Staffer',
+        created: new Date().toISOString(), updated: '', received_qty: 0, received: '' }; db.supply.push(rec); }
+    if (d.qty !== undefined) { const q = Number(d.qty); if (!(q > 0)) return { ok: false, error: 'Quantity must be above zero' };
+      if (q < rec.received_qty) return { ok: false, error: 'Quantity cannot be below what has already been received (' + rec.received_qty + ')' }; rec.qty = q; }
+    if (!rec.qty) return { ok: false, error: 'Quantity required' };
+    ['vendor', 'expected', 'ref', 'note'].forEach(k => { if (d[k] !== undefined) rec[k] = String(d[k] || ''); });
+    if (d.status !== undefined) { if (d.status === 'Done' && rec.received_qty <= 0) return { ok: false, error: 'Receive the goods first; Done is set when the quantity arrives' };
+      if (rec.status === 'Done' && d.status !== 'Done') return { ok: false, error: 'A completed supply order cannot be reopened' }; rec.status = d.status; }
+    rec.updated = new Date().toISOString(); return { ok: true, supply: supplyOut(rec) }; },
+  adminSupplyReceive: b => { const rec = db.supply.find(s => s.so_id === b.id); if (!rec) return { ok: false, error: 'Supply order not found' };
+    const q = Number(b.qty); if (!(q > 0)) return { ok: false, error: 'Quantity must be above zero' };
+    if (!['Planned', 'Open'].includes(rec.status)) return { ok: false, error: 'This supply order is ' + rec.status };
+    const p = prodOf(rec.sku); p.on_hand += q; rec.received_qty += q; rec.received = new Date().toISOString();
+    rec.status = (rec.received_qty >= rec.qty || b.close) ? 'Done' : 'Open'; rec.updated = rec.received; return { ok: true, supply: supplyOut(rec) }; },
+  adminSupplyDelete: b => { const rec = db.supply.find(s => s.so_id === b.id); if (!rec) return { ok: false, error: 'Supply order not found' };
+    if (rec.received_qty > 0) return { ok: false, error: 'Stock has been received against this order; cancel it instead of deleting' };
+    db.supply = db.supply.filter(s => s !== rec); return { ok: true }; },
+  adminStockAlert: () => db.settings.notify_email ? { ok: true, sent: true, to: db.settings.notify_email, via: 'backend' } : { ok: true, sent: false, reason: 'notify_email is not set in Settings' },
+  adminStockSchedule: b => { db.settings.reorder_alert = b.mode === 'daily' ? 'daily' : 'off'; return { ok: true, mode: db.settings.reorder_alert }; },
   adminDecks: () => ({ ok: true, decks: db.decks || [] }),
   adminDeckBuild: b => { const id = 'DK-' + String((db.decks = db.decks || []).length + 1).padStart(4, '0');
     db.decks.push({ id, name: b.name, skus: b.skus, company_id: b.company_id || '', company: b.company || '',

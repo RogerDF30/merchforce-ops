@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v22';
+var BUILD = 'v23';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -189,7 +189,7 @@ $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') 
 $('lockNow').onclick = function () { lock('Signed out.'); };
 
 /* ---------- tabs ---------- */
-var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, companies: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
+var LOADERS = { requests: loadRequests, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, companies: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
 document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
     document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
@@ -1424,6 +1424,380 @@ function editContact(companyId, ct, done) {
         if (done) { editCompany(A.companies.filter(function (x) { return x.id === companyId; })[0]); }
       });
     }).catch(function (e) { $('tSave').disabled = false; $('mErr').textContent = e.message; });
+  };
+}
+
+/* ================= STOCK (phase 5) ================= */
+/* Reorder, fulfilment queue, production plan (made in house) and purchase
+   plan (bought from vendors). All measured from StockLog and the order book;
+   nothing here is a forecast. */
+
+A.stockView = A.stockView || 'reorder';
+
+function loadStock() {
+  A.loaded.stock = true;
+  $('p-stock').innerHTML = '<div class="spin"></div>';
+  api('adminStock').then(function (res) { A.stock = res; renderStock(); })
+    .catch(function (e) { $('p-stock').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+}
+
+function refreshStock() {
+  return api('adminStock').then(function (res) { A.stock = res; renderStock(); });
+}
+
+function modePill(mode) {
+  return '<span class="pill ' + (mode === 'make' ? 'st-InProduction' : 'st-PIAccepted') + '">' + (mode === 'make' ? 'make' : 'buy') + '</span>';
+}
+function supplyPill(st, kind) {
+  var cls = { Planned: 'st-New', Open: 'st-POReceived', Done: 'st-Delivered', Cancelled: 'st-Cancelled' }[st] || 'st-Closed';
+  var label = st === 'Open' ? (kind === 'make' ? 'Started' : 'Ordered') : st;
+  return '<span class="pill ' + cls + '">' + esc(label) + '</span>';
+}
+function stockProduct(sku) {
+  return (A.stock.products || []).filter(function (p) { return p.sku === sku; })[0];
+}
+
+function renderStock() {
+  var D = A.stock, c = D.counts;
+  var views = [['reorder', 'Reorder'], ['queue', 'Fulfilment'], ['make', 'Production'], ['buy', 'Purchases']];
+  $('p-stock').innerHTML =
+    '<div class="panel-head"><h2>Stock</h2>' +
+      '<span style="color:var(--ink-3);font-size:13px;font-weight:600">consumption over ' + D.measured_over_days + ' days · ' + esc(D.generated_at) + '</span>' +
+      '<span class="sp"></span>' +
+      '<div class="seg" id="stkSeg">' + views.map(function (v) {
+        return '<button data-v="' + v[0] + '"' + (A.stockView === v[0] ? ' class="on"' : '') + '>' + v[1] + '</button>';
+      }).join('') + '</div></div>' +
+    '<div class="stat-row">' +
+      stat(c.out_of_stock, 'out of stock') + stat(c.reorder_due, 'at or below reorder point') +
+      stat(c.overdue + '<span style="color:var(--ink-3);font-size:14px"> / ' + c.queue + '</span>', 'orders past stage SLA') +
+      stat(c.make_open, 'production runs open') + stat(c.buy_open, 'purchases open') +
+    '</div>' +
+    '<div id="stkBody"></div>';
+  $('stkSeg').querySelectorAll('button').forEach(function (b) {
+    b.onclick = function () { A.stockView = b.dataset.v; renderStock(); };
+  });
+  ({ reorder: renderReorder, queue: renderQueue, make: renderPlan, buy: renderPlan })[A.stockView]();
+}
+
+/* ---------- reorder ---------- */
+
+function renderReorder() {
+  var D = A.stock, rows = D.reorder;
+  var f = A.reorderFilter || 'all';
+  var shown = rows.filter(function (r) { return f === 'all' || r.mode === f; });
+  $('stkBody').innerHTML =
+    '<div class="panel-head" style="margin-top:6px"><h3 style="margin:0">Reorder</h3>' +
+      '<div class="chips" style="margin:0 0 0 14px" id="roChips">' +
+        [['all', 'All'], ['make', 'Made in house'], ['buy', 'Bought in']].map(function (x) {
+          return '<button class="chip' + (f === x[0] ? ' on' : '') + '" data-f="' + x[0] + '">' + x[1] + '</button>';
+        }).join('') + '</div>' +
+      '<span class="sp"></span>' +
+      '<button class="btn small" id="roAlert" title="Email this list to the notification address now">Email digest</button>' +
+      '<label class="note" style="margin:0 0 0 10px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="roDaily"' + (D.reorder_alert === 'daily' ? ' checked' : '') + '> daily at 8am</label>' +
+    '</div>' +
+    '<p class="note" style="margin-top:-4px">Products whose available to promise (on hand − reserved − safety) is at or below their reorder point. ' +
+      'Suggested quantity covers lead time plus ' + D.cover_days + ' days at the measured rate, plus safety stock, less what is already on order or in production, rounded up to the lot ' +
+      '(production batch for made goods, vendor MOQ for bought goods).' +
+      (D.counts.supply_mode_unset ? ' <b>' + D.counts.supply_mode_unset + ' product' + (D.counts.supply_mode_unset === 1 ? ' has' : 's have') + ' no supply mode set</b> and default to bought in; set it from the Supply button on each row.' : '') +
+      (D.counts.no_reorder_point ? ' ' + D.counts.no_reorder_point + ' product' + (D.counts.no_reorder_point === 1 ? ' has' : 's have') + ' no reorder point, so only appear here once they run out.' : '') +
+    '</p>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>Product</th><th>Mode</th><th class="num">ATP</th><th class="num">Point</th><th class="num">Rate/day</th><th class="num">Cover</th>' +
+      '<th class="num">Inbound</th><th class="num">Suggest</th><th></th>' +
+    '</tr></thead><tbody id="roRows"></tbody></table></div>';
+
+  var tb = $('roRows');
+  if (!shown.length) tb.innerHTML = '<tr><td colspan="9"><div class="empty" style="padding:26px 0">Nothing at or below its reorder point.</div></td></tr>';
+  shown.forEach(function (r) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><b>' + esc(r.name) + '</b><br><small style="color:var(--ink-3)">' + esc(r.sku) + (r.vendor ? ' · ' + esc(r.vendor) : '') + (r.last_out ? ' · last out ' + esc(r.last_out) : '') + '</small></td>' +
+      '<td>' + modePill(r.mode) + '</td>' +
+      '<td class="num">' + (r.atp <= 0 ? '<span class="badge out">' + qty(r.atp) + '</span>' : '<span class="badge low">' + qty(r.atp) + '</span>') + '</td>' +
+      '<td class="num">' + (r.reorder_point ? qty(r.reorder_point) : '<span style="color:var(--ink-3)">not set</span>') + '</td>' +
+      '<td class="num">' + r.rate_per_day + '</td>' +
+      '<td class="num">' + (r.days_cover === null ? '<span style="color:var(--ink-3)">no dispatches</span>' : r.days_cover + ' d') + '</td>' +
+      '<td class="num">' + (r.inbound ? qty(r.inbound) : '—') + '</td>' +
+      '<td class="num">' + (r.covered ? '<span class="badge in">covered</span>' : '<b>' + qty(r.suggest_qty) + '</b>') + '</td>' +
+      '<td class="num" style="white-space:nowrap">' +
+        '<button class="btn small" data-fields="' + esc(r.sku) + '">Supply</button> ' +
+        '<button class="btn primary small" data-plan="' + esc(r.sku) + '"' + (r.covered ? ' disabled' : '') + '>' + (r.mode === 'make' ? 'Plan run' : 'Plan purchase') + '</button></td>';
+    tb.appendChild(tr);
+  });
+  $('roChips').querySelectorAll('.chip').forEach(function (b) { b.onclick = function () { A.reorderFilter = b.dataset.f; renderReorder(); }; });
+  tb.querySelectorAll('button[data-fields]').forEach(function (b) { b.onclick = function () { editSupplyFields(b.dataset.fields); }; });
+  tb.querySelectorAll('button[data-plan]').forEach(function (b) {
+    b.onclick = function () {
+      var r = rows.filter(function (x) { return x.sku === b.dataset.plan; })[0];
+      newSupply({ sku: r.sku, kind: r.mode, qty: r.suggest_qty, vendor: r.vendor, lead_days: r.lead_days });
+    };
+  });
+  $('roAlert').onclick = function () {
+    $('roAlert').disabled = true;
+    api('adminStockAlert').then(function (res) {
+      toast(res.sent ? 'Sent to ' + res.to + ' via ' + res.via : 'Not sent: ' + res.reason);
+    }).catch(function (e) { toast(e.message); }).then(function () { $('roAlert').disabled = false; });
+  };
+  $('roDaily').onchange = function () {
+    var mode = $('roDaily').checked ? 'daily' : 'off';
+    api('adminStockSchedule', { mode: mode }).then(function (res) {
+      A.stock.reorder_alert = res.mode;
+      toast(res.mode === 'daily' ? 'Reorder digest goes out daily at 8am to the notification address' : 'Daily digest off');
+    }).catch(function (e) { toast(e.message); $('roDaily').checked = D.reorder_alert === 'daily'; });
+  };
+}
+
+function editSupplyFields(sku) {
+  var p = stockProduct(sku);
+  if (!p) return;
+  openDrawer(
+    '<h2 style="margin:0 0 4px">' + esc(p.name) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">' + esc(p.sku) + ' · how this product is replenished. Nothing else on the product changes.</p>' +
+    '<div class="field"><label>Supply mode</label><select id="sfMode">' +
+      '<option value="buy"' + (p.mode === 'buy' ? ' selected' : '') + '>Bought from a vendor (purchase plan)</option>' +
+      '<option value="make"' + (p.mode === 'make' ? ' selected' : '') + '>Made in house (production plan)</option></select></div>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Vendor</label><input id="sfVendor" value="' + esc(p.vendor) + '" placeholder="who supplies it"></div>' +
+      '<div class="field"><label>Lead time</label><input id="sfLead" value="' + esc(p.lead_days) + '" placeholder="days"></div>' +
+      '<div class="field"><label>Vendor MOQ <small style="font-weight:400">(buy: lot size)</small></label><input id="sfVmoq" type="number" min="0" value="' + (p.vendor_moq || '') + '" placeholder="blank = catalogue MOQ ' + p.moq + '"></div>' +
+      '<div class="field"><label>Batch size <small style="font-weight:400">(make: lot size)</small></label><input id="sfBatch" type="number" min="0" value="' + (p.batch_qty || '') + '" placeholder="blank = catalogue MOQ ' + p.moq + '"></div>' +
+      '<div class="field"><label>Reorder point</label><input id="sfRop" type="number" min="0" value="' + p.reorder_point + '"></div>' +
+      '<div class="field"><label>Safety stock</label><input id="sfSafety" type="number" min="0" value="' + p.safety_stock + '"></div>' +
+    '</div>' +
+    '<p class="note">ATP now ' + qty(p.atp) + ' (on hand ' + qty(p.on_hand) + '). The reorder point is typed by hand until there is enough dispatch history to derive it.</p>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="sfSave" style="width:100%;justify-content:center">Save</button>');
+  $('sfSave').onclick = function () {
+    $('sfSave').disabled = true;
+    api('adminSupplyFields', {
+      sku: p.sku, supply_mode: $('sfMode').value, vendor: $('sfVendor').value.trim(),
+      lead_time: $('sfLead').value.trim(), vendor_moq: $('sfVmoq').value, batch_qty: $('sfBatch').value,
+      reorder_point: $('sfRop').value, safety_stock: $('sfSafety').value
+    }).then(function () { closeDrawer(); toast('Saved'); A.loaded.catalog = false; return refreshStock(); })
+      .catch(function (e) { $('sfSave').disabled = false; $('mErr').textContent = e.message; });
+  };
+}
+
+/* ---------- fulfilment queue ---------- */
+
+function renderQueue() {
+  var rows = A.stock.queue;
+  $('stkBody').innerHTML =
+    '<h3 style="margin:6px 0 4px">Fulfilment queue</h3>' +
+    '<p class="note" style="margin-top:0">Orders from PO Received onward, oldest against their stage SLA first (PO Received 7 days, In Production 21, Dispatched 10). ' +
+      'A line is short when on hand went negative at PO Received: the order was promised units the shelf did not have.</p>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>Order</th><th>Company</th><th>Stage</th><th class="num">In stage</th><th class="num">Lines</th><th class="num">Units</th><th class="num">Shipped</th><th>Stock</th><th></th>' +
+    '</tr></thead><tbody id="fqRows"></tbody></table></div>';
+  var tb = $('fqRows');
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="9"><div class="empty" style="padding:26px 0">Nothing in fulfilment.</div></td></tr>';
+  rows.forEach(function (r) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><b>' + esc(r.id) + '</b>' + (r.po_number ? '<br><small style="color:var(--ink-3)">PO ' + esc(r.po_number) + '</small>' : '') + '</td>' +
+      '<td>' + esc(r.company) + '</td>' +
+      '<td>' + statusPill(r.status) + '</td>' +
+      '<td class="num">' + (r.overdue ? '<span class="badge out">' + r.age_days + ' d</span>' : r.age_days + ' d') + '<br><small style="color:var(--ink-3)">SLA ' + r.sla_days + '</small></td>' +
+      '<td class="num">' + r.lines + '</td>' +
+      '<td class="num">' + qty(r.units) + '</td>' +
+      '<td class="num">' + (r.shipped ? qty(r.shipped) : '—') + '</td>' +
+      '<td>' + (r.short.length ? '<span class="badge out">short</span> <small>' + esc(r.short.join(', ')) + '</small>' : '<span class="badge in">covered</span>') + '</td>' +
+      '<td class="num"><button class="btn small" data-open="' + esc(r.id) + '">Open</button></td>';
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll('button[data-open]').forEach(function (b) {
+    b.onclick = function () {
+      var r = rows.filter(function (x) { return x.id === b.dataset.open; })[0];
+      document.querySelector('#tabs .chip[data-t="requests"]').click();
+      openOrder(r.order);
+    };
+  });
+}
+
+/* ---------- production plan / purchase plan ---------- */
+
+function renderPlan() {
+  var kind = A.stockView;                       // 'make' | 'buy'
+  var all = A.stock.supply.filter(function (s) { return s.kind === kind; });
+  var open = all.filter(function (s) { return s.status === 'Planned' || s.status === 'Open'; });
+  var done = all.filter(function (s) { return s.status === 'Done' || s.status === 'Cancelled'; });
+  var isMake = kind === 'make';
+  var labels = isMake
+    ? { title: 'Production plan', unit: 'run', open: 'Started', receive: 'Record output', ref: 'Batch', who: '' }
+    : { title: 'Purchase plan', unit: 'purchase', open: 'Ordered', receive: 'Receive', ref: 'PO no.', who: 'Vendor' };
+
+  // weekly load: open quantity by expected week
+  var weeks = {};
+  open.forEach(function (s) {
+    var d = s.expected ? new Date(s.expected) : null;
+    var key = d && !isNaN(d.getTime()) ? weekKey(d) : 'unscheduled';
+    weeks[key] = (weeks[key] || 0) + Math.max(0, s.qty - s.received_qty);
+  });
+  var weekKeys = Object.keys(weeks).sort(function (a, b) { return a === 'unscheduled' ? 1 : b === 'unscheduled' ? -1 : a < b ? -1 : 1; });
+
+  // purchases group by vendor
+  var groups = {};
+  open.forEach(function (s) {
+    var g = isMake ? 'Runs' : (s.vendor || 'No vendor');
+    (groups[g] = groups[g] || []).push(s);
+  });
+
+  $('stkBody').innerHTML =
+    '<div class="panel-head" style="margin-top:6px"><h3 style="margin:0">' + labels.title + '</h3><span class="sp"></span>' +
+      '<button class="btn primary small" id="plNew">+ ' + (isMake ? 'Production run' : 'Purchase') + '</button></div>' +
+    '<p class="note" style="margin-top:-4px">' + (isMake
+      ? 'Runs for goods made in house. Planned → Started → Done when the output is recorded, which adds it to on hand through StockLog. Open runs count as inbound on the reorder screen.'
+      : 'Purchases from vendors. Planned → Ordered → Done when the goods are received, which adds them to on hand through StockLog. Open purchases count as inbound on the reorder screen.') + '</p>' +
+    (weekKeys.length ? '<div class="stat-row">' + weekKeys.slice(0, 6).map(function (k) {
+      return stat(qty(weeks[k]), k === 'unscheduled' ? 'unscheduled' : 'week of ' + fmtDay(k));
+    }).join('') + '</div>' : '') +
+    Object.keys(groups).sort().map(function (g) {
+      return (isMake ? '' : '<h4 style="margin:14px 0 6px">' + esc(g) + ' <small style="color:var(--ink-3);font-weight:600">· ' + groups[g].length + ' open</small></h4>') +
+        planTable(groups[g], labels, isMake);
+    }).join('') +
+    (!open.length ? '<div class="empty" style="padding:26px 0">No open ' + labels.unit + 's.</div>' : '') +
+    (done.length ? '<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--ink-2)">Completed and cancelled (' + done.length + ')</summary>' + planTable(done, labels, isMake) + '</details>' : '');
+
+  $('plNew').onclick = function () { newSupply({ kind: kind }); };
+  $('stkBody').querySelectorAll('button[data-so]').forEach(function (b) {
+    b.onclick = function () {
+      var s = all.filter(function (x) { return x.id === b.dataset.so; })[0];
+      var act = b.dataset.act;
+      if (act === 'edit') return editSupply(s);
+      if (act === 'receive') return receiveSupply(s, labels);
+      if (act === 'open') return saveSupply({ id: s.id, status: 'Open' }, labels.open);
+      if (act === 'cancel') { if (confirm('Cancel ' + s.id + '?')) saveSupply({ id: s.id, status: 'Cancelled' }, 'Cancelled'); return; }
+      if (act === 'del') {
+        if (!confirm('Delete ' + s.id + '? Only possible while nothing has been received against it.')) return;
+        api('adminSupplyDelete', { id: s.id }).then(function () { toast('Deleted'); return refreshStock(); }).catch(function (e) { toast(e.message); });
+      }
+    };
+  });
+}
+
+function fmtDay(d) {
+  var x = new Date(d);
+  return isNaN(x) ? esc(String(d)) : x.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function weekKey(d) {
+  var m = new Date(d); m.setDate(m.getDate() - ((m.getDay() + 6) % 7));   // Monday
+  return m.toISOString().slice(0, 10);
+}
+
+function planTable(list, labels, isMake) {
+  return '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+    '<th>' + (isMake ? 'Run' : 'Purchase') + '</th><th>Product</th>' + (isMake ? '' : '<th>Vendor</th>') +
+    '<th class="num">Qty</th><th class="num">Received</th><th>Expected</th><th>' + labels.ref + '</th><th>Status</th><th></th>' +
+    '</tr></thead><tbody>' + list.map(function (s) {
+      var live = s.status === 'Planned' || s.status === 'Open';
+      var exp = s.expected ? fmtDay(s.expected) : '<span style="color:var(--ink-3)">—</span>';
+      var late = live && s.expected && new Date(s.expected).getTime() < Date.now() - 864e5;
+      return '<tr>' +
+        '<td><b>' + esc(s.id) + '</b><br><small style="color:var(--ink-3)">' + esc(s.created_by) + ' · ' + fmtDate(s.created) + '</small></td>' +
+        '<td>' + esc(s.name) + '<br><small style="color:var(--ink-3)">' + esc(s.sku) + '</small></td>' +
+        (isMake ? '' : '<td>' + esc(s.vendor || '—') + '</td>') +
+        '<td class="num">' + qty(s.qty) + '</td>' +
+        '<td class="num">' + (s.received_qty ? qty(s.received_qty) : '—') + '</td>' +
+        '<td>' + (late ? '<span class="badge out">' + exp + '</span>' : exp) + '</td>' +
+        '<td>' + esc(s.ref || '—') + (s.note ? '<br><small style="color:var(--ink-3)">' + esc(s.note) + '</small>' : '') + '</td>' +
+        '<td>' + supplyPill(s.status, s.kind) + '</td>' +
+        '<td class="num" style="white-space:nowrap">' + (live
+          ? '<button class="btn small" data-so="' + esc(s.id) + '" data-act="edit">Edit</button> ' +
+            (s.status === 'Planned' ? '<button class="btn small" data-so="' + esc(s.id) + '" data-act="open">' + labels.open + '</button> ' : '') +
+            '<button class="btn primary small" data-so="' + esc(s.id) + '" data-act="receive">' + labels.receive + '</button> ' +
+            (s.received_qty ? '<button class="btn small" data-so="' + esc(s.id) + '" data-act="cancel" title="Cancel the remainder">×</button>'
+                            : '<button class="btn small" data-so="' + esc(s.id) + '" data-act="del" title="Delete">×</button>')
+          : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+function saveSupply(patch, label) {
+  return api('adminSupplySave', { supply: patch }).then(function () { toast(label || 'Saved'); return refreshStock(); })
+    .catch(function (e) { toast(e.message); });
+}
+
+function supplyForm(s, isNew) {
+  var isMake = s.kind === 'make';
+  var products = A.stock.products.filter(function (p) { return isNew ? p.mode === s.kind : true; });
+  if (isNew && !products.filter(function (p) { return p.sku === s.sku; }).length) products = A.stock.products;
+  return '<h2 style="margin:0 0 4px">' + (isNew ? 'New ' + (isMake ? 'production run' : 'purchase') : esc(s.id)) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">' + (isMake ? 'Goods made in house.' : 'Goods bought from a vendor.') + (isNew ? '' : ' ' + esc(s.name) + ' · ' + esc(s.sku)) + '</p>' +
+    (isNew ? '<div class="field"><label>Product</label><select id="soSku">' +
+      '<option value="">Choose…</option>' + products.map(function (p) {
+        return '<option value="' + esc(p.sku) + '"' + (p.sku === s.sku ? ' selected' : '') + '>' + esc(p.name) + ' · ' + esc(p.sku) + ' · ATP ' + qty(p.atp) + '</option>';
+      }).join('') + '</select></div>' : '') +
+    '<div class="f2">' +
+      '<div class="field"><label>Quantity</label><input id="soQty" type="number" min="1" value="' + (s.qty || '') + '"></div>' +
+      '<div class="field"><label>Expected ' + (isMake ? 'finish' : 'delivery') + '</label><input id="soExp" type="date" value="' + esc(s.expected || '') + '"></div>' +
+      (isMake ? '' : '<div class="field"><label>Vendor</label><input id="soVendor" value="' + esc(s.vendor || '') + '"></div>') +
+      '<div class="field"><label>' + (isMake ? 'Batch / job no.' : 'PO number') + '</label><input id="soRef" value="' + esc(s.ref || '') + '"></div>' +
+    '</div>' +
+    '<div class="field"><label>Note</label><input id="soNote" value="' + esc(s.note || '') + '"></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="soSave" style="width:100%;justify-content:center">' + (isNew ? 'Add to plan' : 'Save') + '</button>';
+}
+
+function readSupplyForm(isMake) {
+  return {
+    qty: $('soQty').value, expected: $('soExp').value, ref: $('soRef').value.trim(), note: $('soNote').value.trim(),
+    vendor: isMake ? undefined : $('soVendor').value.trim()
+  };
+}
+
+function newSupply(pre) {
+  pre = pre || {};
+  var kind = pre.kind === 'make' ? 'make' : 'buy';
+  var s = { kind: kind, sku: pre.sku || '', qty: pre.qty || '', vendor: pre.vendor || '', ref: '', note: '', expected: '' };
+  if (pre.lead_days) { var d = new Date(); d.setDate(d.getDate() + pre.lead_days); s.expected = d.toISOString().slice(0, 10); }
+  openDrawer(supplyForm(s, true));
+  $('soSku').onchange = function () {
+    var p = stockProduct($('soSku').value);
+    if (!p) return;
+    if ($('soVendor') && !$('soVendor').value) $('soVendor').value = p.vendor || '';
+    if (!$('soQty').value) $('soQty').value = p.lot;
+    if (!$('soExp').value && p.lead_days) { var d = new Date(); d.setDate(d.getDate() + p.lead_days); $('soExp').value = d.toISOString().slice(0, 10); }
+  };
+  $('soSave').onclick = function () {
+    var sku = $('soSku').value;
+    if (!sku) { $('mErr').textContent = 'Choose a product'; return; }
+    $('soSave').disabled = true;
+    var body = readSupplyForm(kind === 'make');
+    body.sku = sku; body.kind = kind;
+    api('adminSupplySave', { supply: body }).then(function (res) {
+      closeDrawer(); toast(res.supply.id + ' added to the ' + (kind === 'make' ? 'production' : 'purchase') + ' plan');
+      A.stockView = kind; return refreshStock();
+    }).catch(function (e) { $('soSave').disabled = false; $('mErr').textContent = e.message; });
+  };
+}
+
+function editSupply(s) {
+  openDrawer(supplyForm(s, false));
+  $('soSave').onclick = function () {
+    $('soSave').disabled = true;
+    var body = readSupplyForm(s.kind === 'make');
+    body.id = s.id;
+    api('adminSupplySave', { supply: body }).then(function () { closeDrawer(); toast('Saved'); return refreshStock(); })
+      .catch(function (e) { $('soSave').disabled = false; $('mErr').textContent = e.message; });
+  };
+}
+
+function receiveSupply(s, labels) {
+  var left = Math.max(0, s.qty - s.received_qty);
+  openDrawer(
+    '<h2 style="margin:0 0 4px">' + labels.receive + ' · ' + esc(s.id) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">' + esc(s.name) + ' · ' + esc(s.sku) + '. ' + qty(s.received_qty) + ' of ' + qty(s.qty) + ' in so far.</p>' +
+    '<div class="field"><label>Quantity ' + (s.kind === 'make' ? 'produced' : 'received') + ' now</label><input id="rvQty" type="number" min="1" value="' + left + '"></div>' +
+    '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin:6px 0"><input id="rvClose" type="checkbox"> Close the order even if this is less than the balance</label>' +
+    '<p class="note">Adds to on hand and writes a StockLog row. A partial quantity leaves the order open for the rest.</p>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="rvSave" style="width:100%;justify-content:center">' + labels.receive + '</button>');
+  $('rvSave').onclick = function () {
+    $('rvSave').disabled = true;
+    api('adminSupplyReceive', { id: s.id, qty: $('rvQty').value, close: $('rvClose').checked }).then(function (res) {
+      closeDrawer(); toast(res.supply.status === 'Done' ? s.id + ' complete' : 'Recorded; ' + qty(res.supply.qty - res.supply.received_qty) + ' still to come');
+      A.loaded.catalog = false; return refreshStock();
+    }).catch(function (e) { $('rvSave').disabled = false; $('mErr').textContent = e.message; });
   };
 }
 
