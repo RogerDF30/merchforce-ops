@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v27';
+var BUILD = 'v28';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -3040,7 +3040,7 @@ function renderSyncCard(s) {
       '<td style="font-size:12.5px">' + lastTxt + '</td>' +
       '<td style="white-space:nowrap">' +
       (push ? '<button class="btn small" data-conn="' + i + '">Connector</button> '
-            : '<button class="btn small" data-sync="' + i + '">Sync</button> ') +
+            : '<button class="btn small" data-sync="' + i + '">Sync</button> <button class="btn small" data-conn="' + i + '" title="Script for the supplier\'s sheet that pulls stock from Merchforce (for Viewer-only sheets)">Stock connector</button> ') +
       '<button class="btn ghost small" data-edit="' + i + '">Edit</button> ' +
       '<button class="btn ghost small" data-del="' + i + '" style="color:var(--bad)">✕</button></td></tr>';
   }).join('');
@@ -3373,7 +3373,7 @@ function openMapEditor(m, index) {
     $('zWbWrap').hidden = push;
     $('zModeNote').innerHTML = push
       ? 'For suppliers who will not share their file. A small connector runs on <b>their</b> sheet and sends only the columns you map here — Merchforce never opens the file. You get the connector script right after saving.'
-      : 'Merchforce opens the sheet directly. The supplier shares it with the backend account: Viewer to read, <b>Editor</b> if stock is to be written back.';
+      : 'Merchforce opens the sheet directly. The supplier shares it with the backend account: Viewer to read, <b>Editor</b> if stock is to be written back. Viewer only? Turn write-back off and give them the <b>Stock connector</b> from the mapping list instead; it pulls stock into their sheet from their side.';
     $('zSave').textContent = push ? 'Save mapping & get connector' : 'Save mapping & sync now';
     paintMap();
   }
@@ -3438,32 +3438,49 @@ function openMapEditor(m, index) {
 }
 
 /* The push connector: runs on the supplier's own sheet, sends only mapped columns. */
-function openPushConnector(m) {
-  var code =
-"/** Merchforce connector — this sheet stays private; only the mapped columns are sent. */\n" +
+function connectorCode(m) {
+  var push = m.mode === 'push';
+  var stockCol = '';
+  (m.sources || []).concat(m.sources && m.sources.length ? [] : [{ tab: m.tab, sku_col: m.sku_col, fields: m.fields || [] }]).forEach(function (src) {
+    (src.fields || []).forEach(function (f) { if (f.field === 'on_hand' && !stockCol) stockCol = f.col; });
+  });
+  var skuCol = (m.sources && m.sources[0] && m.sources[0].sku_col) || m.sku_col || 'Code';
+  return "/** Merchforce connector — runs inside this sheet, under your own Google account. Nothing here is shared with anyone. */\n" +
 "var MERCHFORCE_URL = '" + CONFIG.API_URL + "';\n" +
 "var MERCHFORCE_TOKEN = '" + CONFIG.API_TOKEN + "';\n" +
 "var PUSH_KEY = '" + (m.push_key || '') + "';\n" +
-"var TABS = [];   // empty = every tab in this sheet; or e.g. ['Stock','Price List']\n" +
+"var TABS = [];              // " + (push ? "empty = send every tab; or e.g. ['Stock','Price List']" : "tabs to write stock into; empty = every tab that has the columns below") + "\n" +
+"var SKU_COLUMN = '" + skuCol.replace(/'/g, "\\'") + "';      // header of the column holding the product code\n" +
+"var STOCK_COLUMN = '" + (stockCol || 'Stock').replace(/'/g, "\\'") + "';    // header of the column Merchforce keeps current\n" +
+"var POLL_MINUTES = 5;       // how often to fetch stock from Merchforce (1 on a Workspace account, 5 on a free Gmail account)\n" +
+"\n" +
+"function onOpen() {\n" +
+"  SpreadsheetApp.getUi().createMenu('Merchforce')\n" +
+"    .addItem('Pull stock now', 'merchforcePullStock')\n" +
+(push ? "    .addItem('Send this sheet now', 'merchforceSend')\n" : "") +
+"    .addItem('Install / repair connector', 'install')\n" +
+"    .addToUi();\n" +
+"}\n" +
 "\n" +
 "function install() {\n" +
 "  ScriptApp.getProjectTriggers().forEach(function (t) {\n" +
-"    var f = t.getHandlerFunction();\n" +
-"    if (f === 'merchforceOnEdit' || f === 'merchforceHourly') ScriptApp.deleteTrigger(t);\n" +
+"    if (/^merchforce/.test(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);\n" +
 "  });\n" +
-"  ScriptApp.newTrigger('merchforceOnEdit')\n" +
-"    .forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();\n" +
-"  ScriptApp.newTrigger('merchforceHourly').timeBased().everyHours(1).create();\n" +
-"  merchforceSend();\n" +
+(push ?
+"  ScriptApp.newTrigger('merchforceOnEdit').forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();\n" +
+"  ScriptApp.newTrigger('merchforceHourly').timeBased().everyHours(1).create();\n" : "") +
+"  ScriptApp.newTrigger('merchforcePullStock').timeBased().everyMinutes(POLL_MINUTES).create();\n" +
+(push ? "  merchforceSend();\n" : "") +
+"  merchforcePullStock(true);\n" +
 "}\n" +
 "\n" +
+(push ?
 "function merchforceOnEdit(e) {\n" +
 "  var cache = CacheService.getScriptCache();\n" +
 "  if (cache.get('mf_recent')) return;   // at most one send per 30s while editing\n" +
 "  cache.put('mf_recent', '1', 30);\n" +
 "  merchforceSend();\n" +
 "}\n" +
-"\n" +
 "function merchforceHourly() { merchforceSend(); }\n" +
 "\n" +
 "function merchforceSend() {\n" +
@@ -3478,22 +3495,70 @@ function openPushConnector(m) {
 "  });\n" +
 "  if (!tabs.length) return;\n" +
 "  var res = UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
-"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true,\n" +
-"    payload: JSON.stringify({ action: 'syncPush', token: MERCHFORCE_TOKEN,\n" +
-"                              push_key: PUSH_KEY, tabs: tabs })\n" +
+"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true, followRedirects: true,\n" +
+"    payload: JSON.stringify({ action: 'syncPush', token: MERCHFORCE_TOKEN, push_key: PUSH_KEY, tabs: tabs })\n" +
 "  });\n" +
 "  Logger.log(res.getContentText());\n" +
+"}\n" +
+"\n" : "") +
+"/** Fetch current stock from Merchforce and write it into STOCK_COLUMN. Only rows whose value differs are touched. */\n" +
+"function merchforcePullStock(force) {\n" +
+"  var props = PropertiesService.getScriptProperties();\n" +
+"  var since = force === true ? '' : (props.getProperty('mf_stock_version') || '');\n" +
+"  var res = UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
+"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true, followRedirects: true,\n" +
+"    payload: JSON.stringify({ action: 'syncStock', token: MERCHFORCE_TOKEN, push_key: PUSH_KEY, since: since })\n" +
+"  });\n" +
+"  var out;\n" +
+"  try { out = JSON.parse(res.getContentText()); } catch (e) { Logger.log('Merchforce did not answer with JSON: ' + res.getContentText().slice(0, 200)); return; }\n" +
+"  if (!out.ok) { Logger.log('Merchforce: ' + out.error); return; }\n" +
+"  if (out.unchanged) return;\n" +
+"  var stock = {};\n" +
+"  (out.stock || []).forEach(function (s) { stock[String(s.sku).trim().toUpperCase()] = s.on_hand; });\n" +
+"  var written = 0;\n" +
+"  SpreadsheetApp.getActive().getSheets().forEach(function (sh) {\n" +
+"    if (TABS.length && TABS.indexOf(sh.getName()) < 0) return;\n" +
+"    var lr = sh.getLastRow(), lc = sh.getLastColumn();\n" +
+"    if (lr < 2 || lc < 1) return;\n" +
+"    var headers = sh.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });\n" +
+"    var iSku = headers.indexOf(SKU_COLUMN), iStock = headers.indexOf(STOCK_COLUMN);\n" +
+"    if (iSku < 0 || iStock < 0) return;\n" +
+"    var skus = sh.getRange(2, iSku + 1, lr - 1, 1).getValues();\n" +
+"    var cells = sh.getRange(2, iStock + 1, lr - 1, 1);\n" +
+"    var cur = cells.getValues();\n" +
+"    var changed = false;\n" +
+"    for (var i = 0; i < skus.length; i++) {\n" +
+"      var k = String(skus[i][0]).trim().toUpperCase();\n" +
+"      if (!k || !(k in stock)) continue;\n" +
+"      if (Number(cur[i][0]) === Number(stock[k])) continue;\n" +
+"      cur[i][0] = stock[k]; changed = true; written++;\n" +
+"    }\n" +
+"    if (changed) cells.setValues(cur);\n" +
+"  });\n" +
+"  props.setProperty('mf_stock_version', String(out.version));\n" +
+"  Logger.log('Merchforce stock applied: ' + written + ' cells, version ' + out.version);\n" +
 "}";
+}
+
+function openPushConnector(m) {
+  var push = m.mode === 'push';
+  var code = connectorCode(m);
   openDrawer(
     '<h2 style="margin:0 0 4px">Connector for ' + esc(m.brand ? brandNameSafe(m.brand) : 'this sheet') + '</h2>' +
-    '<p class="note" style="margin:0 0 14px">The supplier keeps their file entirely private — this script runs inside <b>their</b> sheet, under their own Google account, and sends only the columns mapped here. Merchforce never opens the file and needs no access to it.</p>' +
+    (push
+      ? '<p class="note" style="margin:0 0 14px">The supplier keeps their file entirely private — this script runs inside <b>their</b> sheet, under their own Google account. It sends only the columns mapped here, and it pulls the app\'s stock figure back into their Stock column, so their sheet stays current without giving Merchforce any access to the file.</p>'
+      : '<p class="note" style="margin:0 0 14px">For a sheet shared with Merchforce as <b>Viewer only</b>. Merchforce reads it as usual; this script, running under the supplier\'s own account, pulls the app\'s stock figure into their Stock column every few minutes and on demand, so the sheet reflects every dispatch and receipt without Merchforce ever being given edit access.</p>') +
     '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
       '<li>The supplier opens their sheet → <b>Extensions → Apps Script</b>.</li>' +
-      '<li>They replace whatever is in the editor with the script below.</li>' +
-      '<li>Save, choose the <b>install</b> function, click <b>Run</b>, approve the authorization (it is their own script, on their own file).</li>' +
-      '<li>The first run sends every tab\'s column names here — then map them in this console (fields may come from different tabs).</li>' +
+      '<li>They replace whatever is in the editor with the script below and save.</li>' +
+      '<li>Choose the <b>install</b> function, click <b>Run</b>, approve the authorization (their own script, on their own file).</li>' +
+      (push ? '<li>The first run sends every tab\'s column names here — then map them in this console (fields may come from different tabs).</li>' : '') +
+      '<li>Reopen the sheet: a <b>Merchforce</b> menu appears with <b>Pull stock now</b>' + (push ? ' and <b>Send this sheet now</b>' : '') + '.</li>' +
     '</ol>' +
-    '<p class="note">After that it sends on every edit (max once per 30 seconds) plus hourly as a safety net. The push key below identifies this mapping — treat it like a password.</p>' +
+    '<p class="note">Stock is pulled every ' + 5 + ' minutes by default (POLL_MINUTES in the script; 1 on a Google Workspace account). Only cells whose value differs are written. ' +
+      (push ? 'Their edits still reach Merchforce on every edit (max once per 30 seconds) plus hourly. ' : '') +
+      'The key below identifies this mapping — treat it like a password. Column names in the script match this mapping: ' + esc((m.sources && m.sources[0] && m.sources[0].sku_col) || m.sku_col || 'Code') + ' for the code and ' +
+      esc(((m.sources || []).concat([{ fields: m.fields || [] }]).map(function (s) { return (s.fields || []).filter(function (f) { return f.field === 'on_hand'; }).map(function (f) { return f.col; })[0]; }).filter(String)[0]) || 'Stock') + ' for stock.</p>' +
     '<textarea id="lsCode" readonly style="width:100%;height:300px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
     '<button class="btn primary" id="lsCopy" style="width:100%;justify-content:center;margin-top:10px">Copy script</button>');
   $('lsCode').value = code;

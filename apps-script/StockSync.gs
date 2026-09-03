@@ -167,7 +167,7 @@ function fnAdminSyncMapSave_(p) {
   } else {
     maps.push(rec);
   }
-  if (mode === 'push' && !rec.push_key) rec.push_key = 'mfp_' + randomToken_(24);
+  if (!rec.push_key) rec.push_key = 'mfp_' + randomToken_(24);   // every mapping: push for push maps, stock pull-back for all
   saveSyncMaps_(maps);
   audit_(p.actor || 'admin', 'sync_map_save', rec.brand || 'all', rec.sheet);
   return ok_({ maps: maps });
@@ -304,7 +304,7 @@ function applySyncData_(map, tabData, actor) {
       });
       var shT = sheet_('PriceTiers');
 
-      var known = {};
+      var known = {}, stockTouched = false;
       rows.forEach(function (r, i) {
         var k = skuKey_(r.sku);
         known[k] = 1;
@@ -330,12 +330,24 @@ function applySyncData_(map, tabData, actor) {
           if (iCol < 1) return;
           var cur = SYNC_FIELDS[field].numeric ? toNum_(r[field]) : String(r[field] === undefined ? '' : r[field]);
           var next = SYNC_FIELDS[field].numeric ? v : String(v);
+          if (field === 'on_hand') {
+            // Change detection: the sheet only overrides the app when the SUPPLIER changed
+            // the cell. If it still shows what we read last time, the app's own movements
+            // (dispatches, receipts) since then stand. Without this, a viewer-only sheet
+            // would silently undo every deduction on the next sync.
+            var seenCol = cols.indexOf('sync_seen') + 1;
+            if (seenCol > sh.getMaxColumns()) seenCol = 0;   // column not on the sheet yet (setupRun pending)
+            var seen = seenCol > 0 ? String(r.sync_seen === undefined || r.sync_seen === null ? '' : r.sync_seen) : '';
+            if (seen !== '' && toNum_(seen) === next) { summary.kept = (summary.kept || 0) + (cur === next ? 0 : 1); return; }
+            if (seenCol > 0) sh.getRange(i + 2, seenCol).setValue(next);
+          }
           if (cur === next) return;
           sh.getRange(i + 2, iCol).setValue(next);
           changed = true;
           if (field === 'on_hand') {
             appendRecord_('StockLog', { ts: now_(), sku: String(r.sku), delta: next - cur,
               reason: 'sheet sync' + (map.brand ? ' (' + map.brand + ')' : ''), actor: actor || 'sync' });
+            stockTouched = true;
           }
         });
         if (changed) {
@@ -374,6 +386,7 @@ function applySyncData_(map, tabData, actor) {
         }
       });
     } finally {
+      if (stockTouched) bumpStockVersion_();
       lock.releaseLock();
     }
     CacheService.getScriptCache().remove('catalog_v1');
@@ -511,6 +524,7 @@ function fnSyncPush_(p) {
 /** skus: array of SKU strings whose on_hand just changed. Best effort; never throws. */
 function writeBackStock_(skus, actor) {
   var out = { written: 0, errors: [] };
+  bumpStockVersion_();
   try {
     var all = getSyncMaps_();
     var maps = all.filter(function (m) { return m.mode !== 'push' && m.write_back && m.sheet; });
@@ -544,6 +558,7 @@ function writeBackStock_(skus, actor) {
             var next = toNum_(r.on_hand);
             if (Number(cell.getValue()) === next) return;
             cell.setValue(next);
+            markSeen_(r.sku, next);
             written++;
           });
         } catch (e) {
@@ -561,6 +576,41 @@ function writeBackStock_(skus, actor) {
     try { audit_(actor || 'system', 'writeback_fail', (skus || []).slice(0, 10).join(','), String(e.message || e)); } catch (e2) {}
   }
   return out;
+}
+
+/** Remember what the sheet now shows for a SKU so change detection does not treat our own write as a supplier edit. */
+function markSeen_(sku, value) {
+  try {
+    var cols = SHEETS.Products, seenCol = cols.indexOf('sync_seen') + 1, sh = sheet_('Products');
+    if (seenCol < 1 || seenCol > sh.getMaxColumns()) return;
+    var rowNum = findRow_('Products', function (r) { return skuKey_(r.sku) === skuKey_(sku); });
+    if (rowNum > 0) sh.getRange(rowNum, seenCol).setValue(value);
+  } catch (e) {}
+}
+
+/* ---------------- stock version + pull-back ----------------
+ * A counter in script properties moves on every on_hand change, whatever the
+ * cause. A connector on the supplier's sheet polls syncStock with the version
+ * it last applied; unchanged → tiny reply; changed → the brand's stock list,
+ * which the connector writes into its own Stock column. Viewer-only sheets can
+ * therefore stay current without the app ever being given edit access.
+ */
+function stockVersion_() { return toNum_(props_().getProperty('STOCK_VER')); }
+function bumpStockVersion_() {
+  try { props_().setProperty('STOCK_VER', String(stockVersion_() + 1)); } catch (e) {}
+}
+
+/** PUBLIC (push_key authorised): {push_key, since} → {version, unchanged} or {version, stock:[{sku, on_hand}]}. */
+function fnSyncStock_(p) {
+  var key = String(p.push_key || '');
+  if (!key) return err_('push_key required');
+  var m = getSyncMaps_().filter(function (x) { return x.push_key && x.push_key === key; })[0];
+  if (!m) return err_('Unknown key — re-copy the connector from the admin console');
+  var ver = stockVersion_();
+  if (toNum_(p.since) === ver && p.since !== undefined && p.since !== '') return ok_({ version: ver, unchanged: true });
+  var stock = readRows_('Products').filter(function (r) { return !m.brand || r.brand_id === m.brand; })
+    .map(function (r) { return { sku: String(r.sku), on_hand: toNum_(r.on_hand) }; });
+  return ok_({ version: ver, stock: stock, brand: m.brand || '' });
 }
 
 /** Push every product's on_hand into the linked sheets now (after turning write-back on, or to repair drift). */

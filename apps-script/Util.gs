@@ -24,10 +24,13 @@ function readRows_(name) {
   var last = sh.getLastRow();
   if (last < 2) return [];
   var cols = SHEETS[name];
-  var vals = sh.getRange(2, 1, last - 1, cols.length).getValues();
+  // Columns appended in code but not yet on the sheet (setupRun pending) read as blank
+  // instead of throwing, so a deploy never takes the console down.
+  var n = Math.min(cols.length, sh.getMaxColumns());
+  var vals = sh.getRange(2, 1, last - 1, n).getValues();
   return vals.map(function (row) {
     var o = {};
-    cols.forEach(function (c, i) { o[c] = row[i]; });
+    cols.forEach(function (c, i) { o[c] = i < n ? row[i] : ''; });
     return o;
   });
 }
@@ -41,8 +44,15 @@ function findRow_(name, pred) {
 
 function writeRecord_(name, rowNum, record) {
   var cols = SHEETS[name];
+  var sh = sheet_(name);
   var vals = cols.map(function (c) { return (c in record) ? record[c] : ''; });
-  sheet_(name).getRange(rowNum, 1, 1, cols.length).setValues([vals]);
+  var n = Math.min(cols.length, sh.getMaxColumns());
+  if (n < cols.length) {
+    // grow the sheet so appended columns land where the schema says (headers get written by setupRun)
+    sh.insertColumnsAfter(sh.getMaxColumns(), cols.length - sh.getMaxColumns());
+    n = cols.length;
+  }
+  sh.getRange(rowNum, 1, 1, n).setValues([vals.slice(0, n)]);
 }
 
 function appendRecord_(name, record) {

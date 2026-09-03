@@ -18,7 +18,9 @@ var SHEETS = {
                  'on_hand', 'reserved', 'safety_stock', 'reorder_point',
                  'visible', 'show_price', 'created', 'updated', 'mrp', 'hsn',
                  // phase 5 (appended): how the product is replenished
-                 'supply_mode', 'vendor', 'vendor_moq', 'batch_qty'],
+                 'supply_mode', 'vendor', 'vendor_moq', 'batch_qty',
+                 // sheet sync change detection: the on_hand last read from the supplier's sheet
+                 'sync_seen'],
   PriceTiers:   ['sku', 'min_qty', 'unit_price', 'gst'],
   Requests:     ['request_id', 'created', 'status', 'company', 'contact', 'email',
                  'phone', 'gstin', 'notes', 'user_email', 'total_est',

@@ -27,6 +27,7 @@ function doPost(e) {
       staffLogin: fnStaffLogin_,
       syncPing: fnSyncPing_,
       syncPush: fnSyncPush_,
+      syncStock: fnSyncStock_,
       orderView:      fnOrderView_,
       orderPiRespond: fnOrderPiRespond_,
       orderPoUpload:  fnOrderPoUpload_
