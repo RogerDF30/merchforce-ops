@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v19';
+var BUILD = 'v20';
 
 var A = {
   key: '', settings: null,
@@ -144,11 +144,14 @@ function renderRequests() {
         '<button data-v="active" class="' + (A.orderView === 'active' ? 'on' : '') + '">Active (' + active.length + ')</button>' +
         '<button data-v="done" class="' + (A.orderView === 'done' ? 'on' : '') + '">Completed (' + done.length + ')</button>' +
       '</div>' +
-      '<span class="sp"></span><button class="btn small" id="rReload">Refresh</button></div>' +
+      '<span class="sp"></span>' +
+      '<button class="btn small" id="rReload">Refresh</button>' +
+      '<button class="btn primary small" id="rNew" style="margin-left:8px">+ Request</button></div>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th>ID</th><th>Created</th><th>Company</th><th>Docs</th><th class="num">Value</th><th>Stock</th><th>Status</th>' +
     '</tr></thead><tbody id="rRows"></tbody></table></div>';
   $('rReload').onclick = loadRequests;
+  $('rNew').onclick = newRequest;
   $('ordSeg').querySelectorAll('button').forEach(function (b) {
     b.onclick = function () { A.orderView = b.dataset.v; renderRequests(); };
   });
@@ -781,6 +784,205 @@ function editBrand(b) {
     api('adminBrandSave', { brand: { id: b.id, name: $('bName').value.trim(), desc: $('bDesc').value.trim(), logo: logo, sort: Number($('bSort').value), active: $('bActive').checked } })
       .then(function () { closeDrawer(); toast('Brand saved'); loadCatalog(); })
       .catch(function (e) { $('mErr').textContent = e.message; });
+  };
+}
+
+/* ================= STAFF-RAISED REQUEST ================= */
+
+/** Who is at the keyboard. Remembered per browser until staff accounts exist. */
+function actorName() {
+  try { return localStorage.getItem('mf_actor') || ''; } catch (e) { return ''; }
+}
+function rememberActor(name) {
+  try { localStorage.setItem('mf_actor', name); } catch (e) {}
+}
+
+/** Same rule the backend applies: highest tier whose minimum the quantity reaches. */
+function tierPrice(p, qty) {
+  var price = 0;
+  (p.tiers || []).slice().sort(function (a, b) { return a.min - b.min; })
+    .forEach(function (t) { if (qty >= t.min) price = t.price; });
+  return price;
+}
+
+function newRequest() {
+  var need = [];
+  if (!A.products.length) need.push(api('adminCatalog').then(function (res) { A.products = res.products; A.brands = res.brands; }));
+  if (!A.companies.length && !A.loaded.companies) need.push(api('adminCompanies').then(function (res) {
+    A.companies = res.companies; A.contacts = res.contacts;
+  }).catch(function () { /* tabs may not exist yet; free-text company still works */ }));
+  Promise.all(need).then(openNewRequest);
+}
+
+function openNewRequest() {
+  var lines = [];          // {sku, qty}
+  var companyId = '';
+
+  var catalogue = A.products.filter(function (p) { return p.visible; });
+  var companies = A.companies.filter(function (c) { return c.active; });
+
+  openDrawer(
+    '<h2 style="margin:0 0 4px">New request</h2>' +
+    '<p class="note" style="margin:0 0 14px">Raised on the customer\'s behalf. It enters the normal flow at <b>New</b>: accept it, build the quotation, and the PI goes out with the client link as usual.</p>' +
+
+    '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(actorName()) + '" placeholder="your name — goes on the order and the audit log"></div>' +
+
+    '<div class="section-head" style="margin-top:14px"><h2 style="font-size:15px">Customer</h2></div>' +
+    '<div class="field"><label>Company *</label>' +
+      '<input id="nCompany" list="nCompanyList" placeholder="pick a company, or type a new name" autocomplete="off">' +
+      '<datalist id="nCompanyList">' + companies.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join('') + '</datalist>' +
+      '<div class="note" id="nCompanyHint" style="margin-top:4px"></div></div>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Contact name *</label><input id="nContact" list="nContactList" autocomplete="off"><datalist id="nContactList"></datalist></div>' +
+      '<div class="field"><label>Contact email *</label><input id="nEmail" type="email"></div>' +
+      '<div class="field"><label>Phone</label><input id="nPhone"></div>' +
+      '<div class="field"><label>GSTIN</label><input id="nGstin" maxlength="15"></div>' +
+      '<div class="field"><label>Ship-to address</label><input id="nShip"></div>' +
+      '<div class="field"><label>Place of supply (state code)</label><input id="nPos" maxlength="2" placeholder="29"></div>' +
+    '</div>' +
+
+    '<div class="section-head" style="margin-top:14px"><h2 style="font-size:15px">Lines</h2>' +
+      '<div class="note-sub">Price is the tier the quantity reaches. Change it later in the quotation builder, not here.</div></div>' +
+    '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">' +
+      '<div class="field" style="flex:1;margin:0"><label>Product</label>' +
+        '<input id="nSku" list="nSkuList" placeholder="type a SKU or name" autocomplete="off">' +
+        '<datalist id="nSkuList">' + catalogue.map(function (p) {
+          return '<option value="' + esc(p.sku) + '">' + esc(p.name) + ' · MOQ ' + p.moq + ' · ATP ' + qty(p.atp) + '</option>';
+        }).join('') + '</datalist></div>' +
+      '<div class="field" style="width:110px;margin:0"><label>Qty</label><input id="nQty" type="number" min="1"></div>' +
+      '<button class="btn small" id="nAdd" style="height:40px">Add</button>' +
+    '</div>' +
+    '<div id="nLines"></div>' +
+
+    '<div class="field" style="margin-top:14px"><label>Notes</label><input id="nNotes" placeholder="anything the quotation builder should know"></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:14px">' +
+      '<button class="btn primary" id="nSave" style="flex:1;justify-content:center">Raise request</button>' +
+    '</div>');
+
+  function findCompany(name) {
+    var k = String(name || '').trim().toLowerCase();
+    return companies.filter(function (c) { return String(c.name).trim().toLowerCase() === k; })[0] || null;
+  }
+  function findProduct(sku) {
+    var k = String(sku || '').trim().toUpperCase();
+    return catalogue.filter(function (p) { return String(p.sku).toUpperCase() === k; })[0] || null;
+  }
+
+  // Choosing a known company fills what we already hold about them.
+  $('nCompany').oninput = function () {
+    var c = findCompany(this.value);
+    companyId = c ? c.id : '';
+    $('nCompanyHint').textContent = c
+      ? 'Existing company ' + c.id + (c.orders ? ' · ' + c.orders + ' previous order' + (c.orders === 1 ? '' : 's') : '')
+      : (this.value.trim() ? 'New company — it will be created from this order on the next import.' : '');
+    if (c) {
+      if (c.gstin && !$('nGstin').value) $('nGstin').value = c.gstin;
+      if (c.ship_address && !$('nShip').value) $('nShip').value = c.ship_address;
+      if (c.state_code && !$('nPos').value) $('nPos').value = c.state_code;
+      if (c.phone && !$('nPhone').value) $('nPhone').value = c.phone;
+      var people = contactsOf(c.id);
+      $('nContactList').innerHTML = people.map(function (ct) { return '<option value="' + esc(ct.name || ct.email) + '">'; }).join('');
+      if (people.length === 1) {
+        $('nContact').value = people[0].name || '';
+        $('nEmail').value = people[0].email || '';
+        if (people[0].phone && !$('nPhone').value) $('nPhone').value = people[0].phone;
+      }
+    } else {
+      $('nContactList').innerHTML = '';
+    }
+  };
+  $('nContact').oninput = function () {
+    if (!companyId) return;
+    var k = this.value.trim().toLowerCase();
+    var ct = contactsOf(companyId).filter(function (x) { return String(x.name).trim().toLowerCase() === k; })[0];
+    if (ct) { $('nEmail').value = ct.email || $('nEmail').value; if (ct.phone) $('nPhone').value = ct.phone; }
+  };
+
+  function paintLines() {
+    if (!lines.length) {
+      $('nLines').innerHTML = '<div class="empty" style="padding:14px 0">No lines yet.</div>';
+      return;
+    }
+    var total = 0;
+    $('nLines').innerHTML =
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+        '<th>SKU</th><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Line</th><th>Stock</th><th></th>' +
+      '</tr></thead><tbody>' +
+      lines.map(function (l, i) {
+        var p = findProduct(l.sku);
+        var unit = p ? tierPrice(p, l.qty) : 0;
+        var lt = unit * l.qty; total += lt;
+        var stock = !p ? '' : l.qty > p.atp
+          ? '<span style="color:var(--bad);font-weight:700">short by ' + qty(l.qty - p.atp) + '</span>'
+          : '<span style="color:var(--ink-3)">' + qty(p.atp) + ' available</span>';
+        return '<tr><td><b>' + esc(l.sku) + '</b></td><td>' + esc(p ? p.name : '?') + '</td>' +
+          '<td class="num"><input type="number" min="1" value="' + l.qty + '" data-i="' + i + '" style="width:80px;text-align:right"></td>' +
+          '<td class="num">' + inr(unit) + '</td><td class="num">' + inr(lt) + '</td>' +
+          '<td>' + stock + '</td>' +
+          '<td class="num"><button class="btn small" data-x="' + i + '">×</button></td></tr>';
+      }).join('') +
+      '</tbody><tfoot><tr><td colspan="4" style="text-align:right;font-weight:700">Estimated total</td>' +
+      '<td class="num"><b>' + inr(total) + '</b></td><td colspan="2"></td></tr></tfoot></table></div>';
+
+    $('nLines').querySelectorAll('input[data-i]').forEach(function (inp) {
+      inp.onchange = function () {
+        var i = Number(inp.dataset.i), p = findProduct(lines[i].sku), v = Math.floor(Number(inp.value) || 0);
+        if (p && v < p.moq) { $('mErr').textContent = p.name + ': minimum order is ' + p.moq; v = p.moq; }
+        else $('mErr').textContent = '';
+        lines[i].qty = Math.max(1, v);
+        paintLines();
+      };
+    });
+    $('nLines').querySelectorAll('button[data-x]').forEach(function (b) {
+      b.onclick = function () { lines.splice(Number(b.dataset.x), 1); paintLines(); };
+    });
+  }
+  paintLines();
+
+  $('nSku').onchange = function () {
+    var p = findProduct(this.value);
+    if (p && !$('nQty').value) $('nQty').value = p.moq;
+  };
+  $('nAdd').onclick = function () {
+    var p = findProduct($('nSku').value);
+    if (!p) { $('mErr').textContent = 'Pick a product from the list.'; return; }
+    var q = Math.floor(Number($('nQty').value) || 0);
+    if (q < p.moq) { $('mErr').textContent = p.name + ': minimum order is ' + p.moq; return; }
+    var existing = lines.filter(function (l) { return l.sku === p.sku; })[0];
+    if (existing) existing.qty += q; else lines.push({ sku: p.sku, qty: q });
+    $('nSku').value = ''; $('nQty').value = ''; $('mErr').textContent = '';
+    paintLines();
+    $('nSku').focus();
+  };
+
+  $('nSave').onclick = function () {
+    var actor = $('nActor').value.trim();
+    var company = $('nCompany').value.trim();
+    var contact = $('nContact').value.trim();
+    var email = $('nEmail').value.trim();
+    if (!actor) { $('mErr').textContent = 'Put your name in Raised by.'; return; }
+    if (!company || !contact || !email) { $('mErr').textContent = 'Company, contact and email are required.'; return; }
+    if (!lines.length) { $('mErr').textContent = 'Add at least one line.'; return; }
+    var gstin = $('nGstin').value.trim().toUpperCase();
+    if (gstin && gstin.length !== 15) { $('mErr').textContent = 'A GSTIN is 15 characters.'; return; }
+
+    var c = findCompany(company);
+    rememberActor(actor);
+    $('nSave').disabled = true;
+    $('mErr').textContent = '';
+    api('adminRequestCreate', {
+      actor: actor, company_id: c ? c.id : '',
+      company: company, contact: contact, email: email,
+      phone: $('nPhone').value.trim(), gstin: gstin, notes: $('nNotes').value.trim(),
+      ship_address: $('nShip').value.trim(), place_of_supply: $('nPos').value.trim(),
+      lines: lines
+    }).then(function (res) {
+      closeDrawer();
+      toast('Raised ' + res.request_id);
+      A.loaded.requests = false;
+      loadRequests();
+    }).catch(function (e) { $('nSave').disabled = false; $('mErr').textContent = e.message; });
   };
 }
 

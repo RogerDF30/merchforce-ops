@@ -146,6 +146,13 @@ function setStatus(r, status) {
 }
 
 const ACTIONS = {
+  adminRequestCreate: b => ACTIONS.request(b),
+  adminCompanies: () => ({ ok: true, companies: [
+      { id: 'CO-0001', name: 'Hourglass Essentials Pvt Ltd', gstin: '29AABCH6959B1ZG', phone: '9632950798', email: 'roger@companystore.io',
+        billing_address: '', ship_address: 'Bengaluru', state_code: '29', owner: 'Roger', notes: '', active: true, contacts: 1, orders: 2, value: 87900 }
+    ], contacts: [
+      { id: 'CT-0001', company_id: 'CO-0001', name: 'Roger Daniel', email: 'roger@companystore.io', phone: '9632950798', role: 'buyer', consent: false, consent_ts: '', consent_source: '', unsubscribed: false }
+    ], unlinked_names: 0, unlinked_orders: 0 }),
   site: () => ({
     ok: true,
     site: {

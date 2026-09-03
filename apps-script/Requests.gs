@@ -44,6 +44,9 @@ function fnRequestSubmit_(p) {
     user_email: String(p.user_email || ''), total_est: total,
     status_dates: JSON.stringify({ New: String(now_()) }), admin_notes: '', updated: now_(),
     token: randomToken_(28), stock_state: '',
+    // Staff-raised requests can carry these up front; the storefront never did.
+    ship_address: String(p.ship_address || '').slice(0, 500),
+    place_of_supply: String(p.place_of_supply || '').slice(0, 2),
     company_id: String(p.company_id || ''), raised_by: String(p.actor || p.raised_by || '')
   });
   cleaned.forEach(function (l, idx) {
@@ -64,7 +67,8 @@ function notifyNewRequest_(id, p, lines, total) {
   if (!to) return;
   try {
     var body = 'New request ' + id + ' from ' + p.company + ' (' + p.contact + ', ' + p.email +
-      (p.phone ? ', ' + p.phone : '') + ')\n\n' +
+      (p.phone ? ', ' + p.phone : '') + ')' +
+      (p.actor || p.raised_by ? '\nRaised in the console by ' + (p.actor || p.raised_by) : '') + '\n\n' +
       lines.map(function (l) { return l.sku + '  ' + l.name + '  x' + l.qty + '  @' + l.price; }).join('\n') +
       '\n\nEstimated total: ' + total + '\nNotes: ' + (p.notes || '-') +
       '\n\nOpen the admin console to review.';
