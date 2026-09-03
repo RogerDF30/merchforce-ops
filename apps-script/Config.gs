@@ -36,7 +36,9 @@ var SHEETS = {
   Shipments:    ['request_id', 'shipment_no', 'ship_date', 'carrier', 'tracking',
                  'qty', 'note', 'status', 'created', 'delivered_on'],
   Users:        ['email', 'name', 'company', 'pass_hash', 'salt', 'active',
-                 'created', 'last_login'],
+                 'created', 'last_login',
+                 // staff accounts (appended)
+                 'role'],
   Events:       ['date', 'sku', 'type', 'count'],
   StockLog:     ['ts', 'sku', 'delta', 'reason', 'actor'],
   AuditLog:     ['ts', 'actor', 'action', 'ref', 'detail']
@@ -76,6 +78,7 @@ var DEFAULT_SETTINGS = {
   co_gstin: '', co_pan: '', co_phone: '', co_email: '',
   co_bank: '', co_terms: '', co_logo_url: '', co_sign_url: '',
   pi_prefix: 'PI', pi_validity_days: '15',
+  session_minutes: '30',        // staff sign-in lapses after this much inactivity
   site_url: '',   // where order.html lives, for links in emails
   primary_color: '#1a1f36',
   // Supplier stock sync: the supplier keeps managing stock in their OWN

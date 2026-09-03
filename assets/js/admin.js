@@ -10,10 +10,10 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v20';
+var BUILD = 'v21';
 
 var A = {
-  key: '', settings: null,
+  key: '', session: '', user: null, sessionMinutes: 30, settings: null,
   requests: [], products: [], brands: [], users: [], analytics: null,
   companies: [], contacts: [],
   days: 90, loaded: {}, syncPreview: null
@@ -38,7 +38,7 @@ function api(action, body) {
   body = body || {};
   body.action = action;
   body.token = CONFIG.API_TOKEN;
-  body.adminKey = A.key;
+  if (A.session) body.session = A.session; else body.adminKey = A.key;
   return fetch(CONFIG.API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -58,7 +58,11 @@ function api(action, body) {
   }, function (netErr) {
     throw new Error(action + ': could not reach the backend (' + (netErr.message || netErr) + ')');
   }).then(function (res) {
-    if (!res.ok) throw new Error(res.error || 'Request failed');
+    if (!res.ok) {
+      if (/session has expired|sign in again/i.test(res.error || '')) lock('Your session expired. Sign in again.');
+      throw new Error(res.error || 'Request failed');
+    }
+    if (res.session && A.session) { A.session = res.session; persistSession(); }
     return res;
   });
 }
@@ -78,26 +82,111 @@ function brandName(id) {
 }
 
 /* ---------- unlock ---------- */
+/* ---------- sign-in, sessions, inactivity ---------- */
+
+function persistSession() {
+  try {
+    if (A.session) localStorage.setItem('mf_session', JSON.stringify({ s: A.session, u: A.user }));
+    else localStorage.removeItem('mf_session');
+  } catch (e) {}
+}
+function restoreSession() {
+  try {
+    var raw = localStorage.getItem('mf_session');
+    if (!raw) return false;
+    var d = JSON.parse(raw);
+    A.session = d.s || ''; A.user = d.u || null;
+    return !!A.session;
+  } catch (e) { return false; }
+}
+
+function enterConsole(res) {
+  A.settings = res.settings;
+  A.relayStatus = res.relay_status || null;
+  if (res.user) A.user = res.user;
+  if (res.session_minutes) A.sessionMinutes = Number(res.session_minutes) || 30;
+  $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : 'master key';
+  $('lock').hidden = true;
+  $('console').hidden = false;
+  A.loaded = {};
+  loadRequests();
+  armIdle();
+}
+
+function lock(msg) {
+  A.session = ''; A.user = null; A.key = '';
+  persistSession();
+  clearTimeout(A._idle);
+  $('console').hidden = true;
+  $('lock').hidden = false;
+  $('lockMsg').textContent = msg || 'Sign in to continue.';
+  $('lPass').value = '';
+  $('lockErr').textContent = '';
+  showStaff();
+}
+
+function signIn() {
+  var email = $('lEmail').value.trim(), pass = $('lPass').value;
+  if (!email || !pass) { $('lockErr').textContent = 'Email and password, please.'; return; }
+  $('loginBtn').disabled = true;
+  $('lockErr').textContent = '';
+  A.session = ''; A.key = '';
+  fetch(CONFIG.API_URL, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow',
+    body: JSON.stringify({ action: 'staffLogin', token: CONFIG.API_TOKEN, email: email, password: pass })
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    $('loginBtn').disabled = false;
+    if (!res.ok) { $('lockErr').textContent = res.error || 'Sign-in failed'; return; }
+    A.session = res.session; A.user = res.user;
+    persistSession();
+    enterConsole(res);
+  }).catch(function (e) { $('loginBtn').disabled = false; $('lockErr').textContent = e.message; });
+}
+
 function unlock() {
   A.key = $('adminKey').value.trim();
+  A.session = ''; A.user = null;
   if (!A.key) return;
   $('unlockBtn').disabled = true;
-  $('lockErr').textContent = '';
+  $('lockErr2').textContent = '';
   api('adminUnlock').then(function (res) {
-    A.settings = res.settings;
-    A.relayStatus = res.relay_status || null;
-    $('lock').hidden = true;
-    $('console').hidden = false;
-    loadRequests();
+    $('unlockBtn').disabled = false;
+    enterConsole(res);
   }).catch(function (e) {
-    $('lockErr').textContent = e.message;
+    $('lockErr2').textContent = e.message;
     $('unlockBtn').disabled = false;
   });
 }
+
+function showStaff() { $('lockStaff').hidden = false; $('lockMaster').hidden = true; }
+function showMaster() { $('lockStaff').hidden = true; $('lockMaster').hidden = false; }
+
+/* Inactivity: the server refuses a stale token; this just gets the person to the
+   lock screen at the same moment rather than on their next click. */
+function armIdle() {
+  clearTimeout(A._idle);
+  A._idle = setTimeout(function () {
+    lock('Signed out after ' + A.sessionMinutes + ' minutes of inactivity.');
+  }, A.sessionMinutes * 60 * 1000);
+}
+['mousedown', 'keydown', 'touchstart', 'scroll'].forEach(function (ev) {
+  document.addEventListener(ev, function () { if (!$('console').hidden) armIdle(); }, { passive: true });
+});
+
 $('unlockBtn').onclick = unlock;
-if ($('buildTag')) $('buildTag').textContent = BUILD;
+$('loginBtn').onclick = signIn;
+$('lPass').addEventListener('keydown', function (e) { if (e.key === 'Enter') signIn(); });
 $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
-$('lockNow').onclick = function () { location.reload(); };
+$('useMaster').onclick = function (e) { e.preventDefault(); showMaster(); };
+$('useStaff').onclick = function (e) { e.preventDefault(); showStaff(); };
+if ($('buildTag')) $('buildTag').textContent = BUILD;
+
+// A session survives a reload; the server decides whether it is still live.
+if (restoreSession()) {
+  api('adminUnlock').then(enterConsole).catch(function () { lock(); });
+}
+$('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
+$('lockNow').onclick = function () { lock('Signed out.'); };
 
 /* ---------- tabs ---------- */
 var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, companies: loadCompanies, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
@@ -825,7 +914,7 @@ function openNewRequest() {
     '<h2 style="margin:0 0 4px">New request</h2>' +
     '<p class="note" style="margin:0 0 14px">Raised on the customer\'s behalf. It enters the normal flow at <b>New</b>: accept it, build the quotation, and the PI goes out with the client link as usual.</p>' +
 
-    '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(actorName()) + '" placeholder="your name — goes on the order and the audit log"></div>' +
+    '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(A.user ? A.user.name : actorName()) + '"' + (A.user ? ' readonly' : '') + ' placeholder="your name — goes on the order and the audit log"></div>' +
 
     '<div class="section-head" style="margin-top:14px"><h2 style="font-size:15px">Customer</h2></div>' +
     '<div class="field"><label>Company *</label>' +
@@ -1209,20 +1298,23 @@ function loadUsers() {
 }
 
 function renderUsers() {
+  var me = A.user || {};
   $('p-users').innerHTML =
-    '<div class="panel-head"><h2>Buyer accounts</h2>' +
-            '<span class="sp"></span><button class="btn primary small" id="uNew">+ User</button></div>' +
-    '<p class="note" style="margin-top:-6px">Accounts matter only in gated mode. In open mode anyone can browse and request; switch the mode under Settings.</p>' +
+    '<div class="panel-head"><h2>Staff accounts</h2>' +
+      '<span class="sp"></span><button class="btn primary small" id="uNew">+ Account</button></div>' +
+    '<p class="note" style="margin-top:-6px">Everyone who uses this console signs in with their own account, so orders, quotations and stock changes are recorded against a person. ' +
+      '<b>Admins</b> can also manage accounts and settings. Sessions lapse after ' + esc(String(A.sessionMinutes)) + ' minutes of inactivity (Settings → Company).</p>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
-      '<th>Email</th><th>Name</th><th>Company</th><th>Active</th><th>Last login</th>' +
+      '<th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Last sign-in</th>' +
     '</tr></thead><tbody id="uRows"></tbody></table></div>';
   $('uNew').onclick = function () { editUser(null); };
   var tb = $('uRows');
-  if (!A.users.length) tb.innerHTML = '<tr><td colspan="5" class="empty">No accounts yet</td></tr>';
+  if (!A.users.length) tb.innerHTML = '<tr><td colspan="5" class="empty">No accounts yet. Create the first one, then sign in with it.</td></tr>';
   A.users.forEach(function (u) {
     var tr = document.createElement('tr');
     tr.className = 'click';
-    tr.innerHTML = '<td><b>' + esc(u.email) + '</b></td><td>' + esc(u.name) + '</td><td>' + esc(u.company) + '</td>' +
+    tr.innerHTML = '<td><b>' + esc(u.name || '—') + '</b>' + (me.email && me.email.toLowerCase() === String(u.email).toLowerCase() ? ' <span class="pill" style="background:var(--accent-soft);color:var(--accent)">you</span>' : '') + '</td>' +
+      '<td>' + esc(u.email) + '</td><td>' + esc(u.role || 'staff') + '</td>' +
       '<td>' + (u.active ? '✓' : '—') + '</td><td>' + (u.last_login ? fmtDate(u.last_login) : '—') + '</td>';
     tr.onclick = function () { editUser(u); };
     tb.appendChild(tr);
@@ -1231,22 +1323,30 @@ function renderUsers() {
 
 function editUser(u) {
   var isNew = !u;
-  u = u || { email: '', name: '', company: '', active: true };
+  u = u || { email: '', name: '', role: 'staff', active: true };
   openDrawer(
-    '<h2 style="margin:0 0 14px">' + (isNew ? 'New buyer account' : esc(u.email)) + '</h2>' +
-    '<div class="field"><label>Email *</label><input id="uEmail" value="' + esc(u.email) + '"' + (isNew ? '' : ' readonly') + '></div>' +
+    '<h2 style="margin:0 0 14px">' + (isNew ? 'New staff account' : esc(u.name || u.email)) + '</h2>' +
     '<div class="f2">' +
-      '<div class="field"><label>Name</label><input id="uName" value="' + esc(u.name) + '"></div>' +
-      '<div class="field"><label>Company</label><input id="uCompany" value="' + esc(u.company) + '"></div>' +
+      '<div class="field"><label>Name *</label><input id="uName" value="' + esc(u.name) + '"></div>' +
+      '<div class="field"><label>Email *</label><input id="uEmail" type="email" value="' + esc(u.email) + '"' + (isNew ? '' : ' readonly') + '></div>' +
     '</div>' +
-    '<div class="field"><label>' + (isNew ? 'Password * (10+ chars)' : 'New password (leave blank to keep)') + '</label><input id="uPass" type="text"></div>' +
-    '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px"><input id="uActive" type="checkbox"' + (u.active ? ' checked' : '') + '> Active</label>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Role</label><select id="uRole">' +
+        '<option value="staff"' + (u.role !== 'admin' ? ' selected' : '') + '>Staff — orders, catalogue, stock</option>' +
+        '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>Admin — also accounts and settings</option>' +
+      '</select></div>' +
+      '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="uActive" type="checkbox"' + (u.active ? ' checked' : '') + '> Active</label>' +
+    '</div>' +
+    '<div class="field"><label>' + (isNew ? 'Password * (10+ characters)' : 'New password (leave blank to keep the current one)') + '</label><input id="uPass" type="text" autocomplete="new-password"></div>' +
     '<div class="form-err" id="mErr"></div>' +
-    '<button class="btn primary" id="uSave" style="width:100%;justify-content:center">Save user</button>');
+    '<button class="btn primary" id="uSave" style="width:100%;justify-content:center">Save account</button>');
   $('uSave').onclick = function () {
-    api('adminUserSave', { user: { email: $('uEmail').value.trim(), name: $('uName').value.trim(), company: $('uCompany').value.trim(), password: $('uPass').value, active: $('uActive').checked } })
-      .then(function () { closeDrawer(); toast('User saved'); loadUsers(); })
-      .catch(function (e) { $('mErr').textContent = e.message; });
+    $('uSave').disabled = true;
+    api('adminUserSave', { user: {
+      email: $('uEmail').value.trim(), name: $('uName').value.trim(), role: $('uRole').value,
+      password: $('uPass').value, active: $('uActive').checked
+    } }).then(function () { closeDrawer(); toast('Account saved'); loadUsers(); })
+      .catch(function (e) { $('uSave').disabled = false; $('mErr').textContent = e.message; });
   };
 }
 
@@ -1495,7 +1595,7 @@ function renderSettings() {
     '</div>' +
     '<div class="form-err" id="sErr"></div>' +
     '<button class="btn primary" id="sSave" style="margin:14px 0 10px">Save settings</button>' +
-    renderMailCard(s) + renderSyncCard(s);
+    renderCompanyCard(s) + renderMailCard(s) + renderSyncCard(s);
 
   $('sSave').onclick = function () {
     $('sSave').disabled = true;
@@ -1510,8 +1610,104 @@ function renderSettings() {
       toast('Settings saved');
     }).catch(function (e) { $('sErr').textContent = e.message; $('sSave').disabled = false; });
   };
+  wireCompanyCard();
   wireMailCard();
   wireSyncCard();
+}
+
+/* The supplier's own identity: printed on every PI and, from phase 4, on every deck. */
+function renderCompanyCard(s) {
+  function f(id, label, val, extra) {
+    return '<div class="field"><label>' + label + '</label><input id="' + id + '" value="' + esc(val || '') + '"' + (extra || '') + '></div>';
+  }
+  function picker(prevId, nameId, pickId, clearId, label, url, hint) {
+    return '<div class="field"><label>' + label + '</label>' +
+      '<div class="logo-picker"><div id="' + prevId + '" class="logo-prev' + (url ? '' : ' no-logo') + '">' +
+        (url ? '<img src="' + esc(url) + '" alt="">' : '<span class="logo-none">None</span>') + '</div>' +
+      '<div class="logo-picker-side"><div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<label class="btn small" for="' + pickId + '" style="cursor:pointer">' + (url ? 'Replace' : 'Choose image') + '</label>' +
+        '<button type="button" class="btn small" id="' + clearId + '"' + (url ? '' : ' hidden') + '>Remove</button></div>' +
+      '<div id="' + nameId + '" class="note logo-name">' + esc(hint) + '</div></div></div>' +
+      '<input id="' + pickId + '" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="sr-only"></div>';
+  }
+  return '<div class="card-block" style="margin-top:10px"><h3>Company</h3>' +
+    '<p class="note" style="margin-top:-4px">This is the issuer on every proforma invoice and the identity on generated decks. Keep it exactly as it should appear on a tax document.</p>' +
+    '<div class="two-col">' +
+      '<div>' +
+        f('cName', 'Legal name', s.co_name) +
+        f('cAddr', 'Registered address', s.co_address) +
+        '<div class="f2">' + f('cState', 'State', s.co_state) + f('cStateCode', 'State code', s.co_state_code, ' maxlength="2" placeholder="29"') + '</div>' +
+        '<div class="f2">' + f('cGstin', 'GSTIN', s.co_gstin, ' maxlength="15"') + f('cPan', 'PAN', s.co_pan, ' maxlength="10"') + '</div>' +
+        '<div class="f2">' + f('cPhone', 'Phone', s.co_phone) + f('cEmail', 'Email', s.co_email) + '</div>' +
+      '</div>' +
+      '<div>' +
+        picker('cLogoPrev', 'cLogoName', 'cLogoFile', 'cLogoClear', 'Logo', s.co_logo_url, 'PNG with a transparent background prints best.') +
+        picker('cSignPrev', 'cSignName', 'cSignFile', 'cSignClear', 'Authorised signature', s.co_sign_url, 'Appears on the PI signature block.') +
+        f('cBank', 'Bank details (as printed on the PI)', s.co_bank) +
+        f('cTerms', 'Standard terms', s.co_terms) +
+        '<div class="f2">' + f('cPiPrefix', 'PI number prefix', s.pi_prefix, ' placeholder="PI"') + f('cPiValid', 'PI validity (days)', s.pi_validity_days, ' type="number" min="1"') + '</div>' +
+        '<div class="field"><label>Sign-out after inactivity</label><select id="cSession">' +
+          [15, 30, 60, 120].map(function (m) { return '<option value="' + m + '"' + (String(s.session_minutes || 30) === String(m) ? ' selected' : '') + '>' + m + ' minutes</option>'; }).join('') +
+        '</select></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="form-err" id="cErr"></div>' +
+    '<button class="btn primary" id="cSave" style="margin-top:8px">Save company</button></div>';
+}
+
+function wireCompanyCard() {
+  var logo = A.settings.co_logo_url || '', sign = A.settings.co_sign_url || '';
+  function bindPicker(fileId, prevId, nameId, clearId, get, set) {
+    $(fileId).onchange = function () {
+      var f = this.files[0]; if (!f) return;
+      if (f.size > 4 * 1024 * 1024) { $('cErr').textContent = 'That file is over 4MB.'; return; }
+      var rd = new FileReader();
+      rd.onload = function () {
+        $(nameId).textContent = 'Uploading ' + f.name + '…';
+        $('cSave').disabled = true;
+        api('adminImageUpload', { data: rd.result, filename: 'company-' + f.name, mime: f.type }).then(function (res) {
+          set(res.url);
+          $(prevId).className = 'logo-prev';
+          $(prevId).innerHTML = '<img src="' + esc(res.url) + '" alt="">';
+          $(clearId).hidden = false;
+          $(nameId).textContent = f.name + ' — press Save company to keep it.';
+          $('cSave').disabled = false;
+        }).catch(function (e) { $('cErr').textContent = e.message; $('cSave').disabled = false; });
+      };
+      rd.readAsDataURL(f);
+    };
+    $(clearId).onclick = function () {
+      set('');
+      $(prevId).className = 'logo-prev no-logo';
+      $(prevId).innerHTML = '<span class="logo-none">None</span>';
+      $(clearId).hidden = true;
+      $(nameId).textContent = 'Removed — press Save company to apply.';
+    };
+  }
+  bindPicker('cLogoFile', 'cLogoPrev', 'cLogoName', 'cLogoClear', function () { return logo; }, function (v) { logo = v; });
+  bindPicker('cSignFile', 'cSignPrev', 'cSignName', 'cSignClear', function () { return sign; }, function (v) { sign = v; });
+
+  $('cSave').onclick = function () {
+    var gstin = $('cGstin').value.trim().toUpperCase();
+    if (gstin && gstin.length !== 15) { $('cErr').textContent = 'A GSTIN is 15 characters.'; return; }
+    $('cSave').disabled = true; $('cErr').textContent = '';
+    api('adminSettings', { save: {
+      co_name: $('cName').value.trim(), co_address: $('cAddr').value.trim(),
+      co_state: $('cState').value.trim(), co_state_code: $('cStateCode').value.trim(),
+      co_gstin: gstin, co_pan: $('cPan').value.trim().toUpperCase(),
+      co_phone: $('cPhone').value.trim(), co_email: $('cEmail').value.trim(),
+      co_bank: $('cBank').value.trim(), co_terms: $('cTerms').value.trim(),
+      co_logo_url: logo, co_sign_url: sign,
+      pi_prefix: $('cPiPrefix').value.trim() || 'PI', pi_validity_days: $('cPiValid').value || '15',
+      session_minutes: $('cSession').value
+    } }).then(function (res) {
+      A.settings = res.settings;
+      A.sessionMinutes = Number(res.settings.session_minutes) || 30;
+      armIdle();
+      $('cSave').disabled = false;
+      toast('Company saved');
+    }).catch(function (e) { $('cErr').textContent = e.message; $('cSave').disabled = false; });
+  };
 }
 
 /* Where notification email is sent from: our account, or the supplier's. */

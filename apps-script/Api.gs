@@ -24,6 +24,7 @@ function doPost(e) {
     // own order page, which is authorised by that order's 28-char token, and the
     // sheet-sync hooks, which are authorised by their own push key.
     var PUBLIC = {
+      staffLogin: fnStaffLogin_,
       syncPing: fnSyncPing_,
       syncPush: fnSyncPush_,
       orderView:      fnOrderView_,
@@ -69,12 +70,27 @@ function doPost(e) {
       adminShipmentDelete: fnAdminShipmentDelete_
     };
 
+    var ADMIN_ONLY = { adminUsers: 1, adminUserSave: 1, adminSettings: 1 };
+
     if (PUBLIC[p.action]) return PUBLIC[p.action](p);
     if (ADMIN[p.action]) {
-      if (String(p.adminKey) !== props_().getProperty('ADMIN_PASS')) {
-        audit_('anon', 'admin_denied', p.action, '');
-        return err_('Bad admin key');
+      // A staff session identifies the person; the master key is the recovery path.
+      var sess = staffSession_(p.session);
+      var master = String(p.adminKey || '') !== '' && String(p.adminKey) === props_().getProperty('ADMIN_PASS');
+      if (!sess && !master) {
+        audit_('anon', 'admin_denied', p.action, p.session ? 'session expired or invalid' : 'bad admin key');
+        return err_(p.session ? 'Your session has expired. Sign in again.' : 'Bad admin key');
       }
+      if (sess) {
+        p.actor = sess.name || sess.email;   // the audit trail names a person, never the client's claim
+        p.role = sess.role;
+        SESSION_OUT_ = makeStaffSession_(sess);
+      } else {
+        p.actor = 'master';
+        p.role = 'admin';
+      }
+      // Managing accounts is for admins (or the master key).
+      if (ADMIN_ONLY[p.action] && p.role !== 'admin') return err_('Only an admin can do that');
       return ADMIN[p.action](p);
     }
     return err_('Unknown action: ' + p.action);

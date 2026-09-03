@@ -2,7 +2,11 @@
 
 function fnAdminUnlock_(p) {
   audit_(p.actor || 'admin', 'admin_unlock', '', '');
-  return ok_({ settings: getSettings_(), relay_status: relayStatus_() });
+  return ok_({
+    settings: getSettings_(), relay_status: relayStatus_(),
+    user: { name: p.actor, role: p.role || 'admin' },
+    session_minutes: sessionMinutes_()
+  });
 }
 
 function fnAdminCatalog_(p) {
@@ -164,6 +168,7 @@ function fnAdminUsers_(p) {
     users: readRows_('Users').map(function (u) {
       return {
         email: u.email, name: u.name, company: u.company,
+        role: u.role || 'staff',
         active: isTrue_(u.active),
         created: String(u.created), last_login: String(u.last_login || '')
       };
@@ -180,6 +185,7 @@ function fnAdminUserSave_(p) {
     var u = readRows_('Users')[rowNum - 2];
     u.name = d.name !== undefined ? d.name : u.name;
     u.company = d.company !== undefined ? d.company : u.company;
+    if (d.role !== undefined) u.role = d.role === 'admin' ? 'admin' : 'staff';
     if (d.active !== undefined) u.active = d.active ? 'TRUE' : 'FALSE';
     if (d.password) {
       if (String(d.password).length < 10) return err_('Password must be 10+ characters');
@@ -193,7 +199,8 @@ function fnAdminUserSave_(p) {
     appendRecord_('Users', {
       email: email, name: d.name || '', company: d.company || '',
       pass_hash: hashPassword_(String(d.password), salt), salt: salt,
-      active: 'TRUE', created: now_(), last_login: ''
+      active: 'TRUE', created: now_(), last_login: '',
+      role: d.role === 'admin' ? 'admin' : 'staff'
     });
   }
   audit_(p.actor || 'admin', 'user_save', email, '');

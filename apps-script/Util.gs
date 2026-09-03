@@ -1,6 +1,10 @@
 /** Merchforce — shared helpers */
 
+/** Set by doPost for an authenticated staff call; every reply carries the refreshed token. */
+var SESSION_OUT_ = null;
+
 function json_(obj) {
+  if (SESSION_OUT_ && obj && obj.ok && obj.session === undefined) obj.session = SESSION_OUT_;
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }

@@ -277,7 +277,7 @@ const ACTIONS = {
     return e ? { ok: false, error: e } : { ok: true, status: r.status, po_url: r.po_url };
   },
   orderList: () => ({ ok: true, orders: db.requests.map(orderOut).reverse() }),
-  adminUnlock: () => ({ ok: true, settings: db.settings, relay_status: db.relayStatus || null }),
+  adminUnlock: b => ({ ok: true, user: b.session ? { name: 'Demo Staffer', role: 'admin' } : { name: 'master', role: 'admin' }, session_minutes: 30, settings: db.settings, relay_status: db.relayStatus || null }),
   adminRequests: () => ({
     ok: true,
     requests: db.requests.map(r => ({
@@ -513,8 +513,17 @@ http.createServer((req, res) => {
       let out;
       try {
         const b = JSON.parse(raw);
+        const SESS = 'mock-session-token';
         if (b.token !== API_TOKEN) out = { ok: false, error: 'Bad token' };
-        else if (b.action && b.action.startsWith('admin') && b.adminKey !== ADMIN_PASS) out = { ok: false, error: 'Bad admin key' };
+        else if (b.action === 'staffLogin') {
+          out = (b.email === 'staff@example.com' && b.password === 'password12')
+            ? { ok: true, session: SESS, user: { email: b.email, name: 'Demo Staffer', role: 'admin' }, session_minutes: 30,
+                settings: ACTIONS.adminSettings({}).settings, relay_status: null }
+            : { ok: false, error: 'Invalid email or password' };
+        }
+        else if (b.action && b.action.startsWith('admin') && b.adminKey !== ADMIN_PASS && b.session !== SESS) {
+          out = { ok: false, error: b.session ? 'Your session has expired. Sign in again.' : 'Bad admin key' };
+        }
         else if (ACTIONS[b.action]) out = ACTIONS[b.action](b);
         else out = { ok: false, error: 'Unknown action: ' + b.action };
       } catch (e) { out = { ok: false, error: e.message }; }

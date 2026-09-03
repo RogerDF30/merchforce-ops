@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/css/style.css?v=20">
+<link rel="stylesheet" href="assets/css/style.css?v=21">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2316192b'/><text x='50' y='68' font-size='55' font-family='sans-serif' font-weight='800' fill='white' text-anchor='middle'>M</text></svg>">
 <style>body { background: #fff; }</style>
 </head>
@@ -19,10 +19,24 @@
   <div class="lockbox">
     <div class="logo" style="margin-bottom:14px"><span class="mark" style="background:var(--ink)">M</span> Merchforce Ops</div>
     <h2>Supplier console</h2>
-    <p>Enter the admin key to continue.</p>
-    <div class="field"><label>Admin key</label><input id="adminKey" type="password" autocomplete="current-password"></div>
-    <div class="form-err" id="lockErr"></div>
-    <button class="btn primary" id="unlockBtn" style="width:100%;justify-content:center">Unlock</button>
+    <p id="lockMsg">Sign in to continue.</p>
+
+    <div id="lockStaff">
+      <div class="field"><label>Email</label><input id="lEmail" type="email" autocomplete="username"></div>
+      <div class="field"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>
+      <div class="form-err" id="lockErr"></div>
+      <button class="btn primary" id="loginBtn" style="width:100%;justify-content:center">Sign in</button>
+      <p class="note" style="margin:12px 0 0;text-align:center"><a href="#" id="useMaster">Use the master key instead</a></p>
+    </div>
+
+    <div id="lockMaster" hidden>
+      <div class="field"><label>Master key</label><input id="adminKey" type="password" autocomplete="off"></div>
+      <div class="form-err" id="lockErr2"></div>
+      <button class="btn primary" id="unlockBtn" style="width:100%;justify-content:center">Unlock</button>
+      <p class="note" style="margin:10px 0 0">The master key is for recovery and for creating the first staff account. Actions taken with it are logged as <b>master</b>, not as a person.</p>
+      <p class="note" style="margin:8px 0 0;text-align:center"><a href="#" id="useStaff">Back to sign in</a></p>
+    </div>
+
     <p class="note" style="margin:12px 0 0;text-align:center">build <span id="buildTag">—</span></p>
   </div>
 </div>
@@ -35,8 +49,9 @@
         <h1>Merchforce Ops</h1>
         <div class="sub">Supplier console · CompanyStore.IO platform</div>
       </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn small" id="lockNow">Lock</button>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="note" id="whoami" style="margin:0"></span>
+        <button class="btn small" id="lockNow">Log out</button>
       </div>
     </div>
     <nav class="chips" id="tabs">
@@ -68,6 +83,6 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="assets/js/admin.js?v=20"></script>
+<script src="assets/js/admin.js?v=21"></script>
 </body>
 </html>
