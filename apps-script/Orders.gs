@@ -40,8 +40,17 @@ function requestRow_(id) {
   return { rowNum: rowNum, rec: readRows_('Requests')[rowNum - 2] };
 }
 
+/* Per-execution read cache for the child tabs: a list of N orders used to read
+   RequestLines and Shipments N times each. Writes clear it. */
+var CHILD_CACHE_ = {};
+function childRows_(tab) {
+  if (!CHILD_CACHE_[tab]) CHILD_CACHE_[tab] = readRows_(tab);
+  return CHILD_CACHE_[tab];
+}
+function clearChildCache_() { CHILD_CACHE_ = {}; }
+
 function linesOf_(id) {
-  return readRows_('RequestLines').filter(function (l) { return String(l.request_id) === String(id); });
+  return childRows_('RequestLines').filter(function (l) { return String(l.request_id) === String(id); });
 }
 
 /**
@@ -399,7 +408,7 @@ function fnAdminPoUpload_(p) {
 /* ------------------------------------------------------------- shipments */
 
 function shipmentsOf_(id) {
-  return readRows_('Shipments').filter(function (r) { return String(r.request_id) === String(id); });
+  return childRows_('Shipments').filter(function (r) { return String(r.request_id) === String(id); });
 }
 
 /** Admin: add or update one part-shipment. Order status follows the shipments. */
@@ -446,6 +455,7 @@ function fnAdminShipmentDelete_(p) {
   });
   if (rowNum < 0) return err_('Shipment not found');
   sheet_('Shipments').deleteRow(rowNum);
+  clearChildCache_();
   return ok_({ shipments: shipmentsOf_(p.id) });
 }
 

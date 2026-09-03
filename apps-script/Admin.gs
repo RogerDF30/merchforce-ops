@@ -116,6 +116,7 @@ function fnAdminProductDelete_(p) {
 }
 
 function replaceChildRows_(tab, pred, newRecords) {
+  clearChildCache_();
   var sh = sheet_(tab);
   var rows = readRows_(tab);
   for (var i = rows.length - 1; i >= 0; i--) {

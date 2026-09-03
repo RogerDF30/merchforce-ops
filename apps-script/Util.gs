@@ -26,13 +26,19 @@ function readRows_(name) {
   var cols = SHEETS[name];
   // Columns appended in code but not yet on the sheet (setupRun pending) read as blank
   // instead of throwing, so a deploy never takes the console down.
-  var n = Math.min(cols.length, sh.getMaxColumns());
+  var n = Math.min(cols.length, maxCols_(name, sh));
   var vals = sh.getRange(2, 1, last - 1, n).getValues();
   return vals.map(function (row) {
     var o = {};
     cols.forEach(function (c, i) { o[c] = i < n ? row[i] : ''; });
     return o;
   });
+}
+
+var MAX_COLS_ = {};
+function maxCols_(name, sh) {
+  if (MAX_COLS_[name] === undefined) MAX_COLS_[name] = sh.getMaxColumns();
+  return MAX_COLS_[name];
 }
 
 /** Find 1-based sheet row for the first record matching pred. Returns -1 if none. */
@@ -43,6 +49,7 @@ function findRow_(name, pred) {
 }
 
 function writeRecord_(name, rowNum, record) {
+  if (typeof clearChildCache_ === 'function') clearChildCache_();
   var cols = SHEETS[name];
   var sh = sheet_(name);
   var vals = cols.map(function (c) { return (c in record) ? record[c] : ''; });
@@ -50,12 +57,14 @@ function writeRecord_(name, rowNum, record) {
   if (n < cols.length) {
     // grow the sheet so appended columns land where the schema says (headers get written by setupRun)
     sh.insertColumnsAfter(sh.getMaxColumns(), cols.length - sh.getMaxColumns());
+    MAX_COLS_[name] = cols.length;
     n = cols.length;
   }
   sh.getRange(rowNum, 1, 1, n).setValues([vals.slice(0, n)]);
 }
 
 function appendRecord_(name, record) {
+  if (typeof clearChildCache_ === 'function') clearChildCache_();
   var cols = SHEETS[name];
   sheet_(name).appendRow(cols.map(function (c) { return (c in record) ? record[c] : ''; }));
 }
