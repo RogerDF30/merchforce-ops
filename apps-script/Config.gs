@@ -31,6 +31,8 @@ var SHEETS = {
                  'ship_address', 'state_code', 'owner', 'notes', 'active', 'created', 'updated'],
   Contacts:     ['contact_id', 'company_id', 'name', 'email', 'phone', 'role',
                  'consent', 'consent_ts', 'consent_source', 'unsubscribed', 'created'],
+  Decks:        ['deck_id', 'name', 'skus', 'company_id', 'company', 'pdf_url', 'pptx_url',
+                 'folder_id', 'created_by', 'created', 'sent_to', 'last_sent'],
   RequestLines: ['request_id', 'line', 'sku', 'name', 'qty', 'unit_price', 'line_total',
                  'list_price', 'gst', 'hsn'],
   Shipments:    ['request_id', 'shipment_no', 'ship_date', 'carrier', 'tracking',

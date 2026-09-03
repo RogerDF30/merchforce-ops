@@ -146,6 +146,14 @@ function setStatus(r, status) {
 }
 
 const ACTIONS = {
+  adminDecks: () => ({ ok: true, decks: db.decks || [] }),
+  adminDeckBuild: b => { const id = 'DK-' + String((db.decks = db.decks || []).length + 1).padStart(4, '0');
+    db.decks.push({ id, name: b.name, skus: b.skus, company_id: b.company_id || '', company: b.company || '',
+      pdf_url: 'https://drive.google.com/file/d/mock-pdf/view', pptx_url: 'https://drive.google.com/file/d/mock-pptx/view',
+      created_by: 'Demo Staffer', created: new Date().toISOString(), sent_to: '', last_sent: '' });
+    return { ok: true, id, products: b.skus.length, missing: 0 }; },
+  adminDeckSend: b => { const d = (db.decks || []).find(x => x.id === b.id); if (d) { d.sent_to = b.to; } return { ok: true, id: b.id, via: 'backend' }; },
+  adminDeckDelete: b => { db.decks = (db.decks || []).filter(x => x.id !== b.id); return { ok: true }; },
   adminRequestCreate: b => ACTIONS.request(b),
   adminCompanies: () => ({ ok: true, companies: [
       { id: 'CO-0001', name: 'Hourglass Essentials Pvt Ltd', gstin: '29AABCH6959B1ZG', phone: '9632950798', email: 'roger@companystore.io',

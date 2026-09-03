@@ -10,12 +10,12 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v21';
+var BUILD = 'v22';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
   requests: [], products: [], brands: [], users: [], analytics: null,
-  companies: [], contacts: [],
+  companies: [], contacts: [], decks: [],
   days: 90, loaded: {}, syncPreview: null
 };
 
@@ -189,7 +189,7 @@ $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') 
 $('lockNow').onclick = function () { lock('Signed out.'); };
 
 /* ---------- tabs ---------- */
-var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, companies: loadCompanies, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
+var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, companies: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
 document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
     document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
@@ -1072,6 +1072,146 @@ function openNewRequest() {
       A.loaded.requests = false;
       loadRequests();
     }).catch(function (e) { $('nSave').disabled = false; $('mErr').textContent = e.message; });
+  };
+}
+
+/* ================= DECKS ================= */
+
+function loadDecks() {
+  A.loaded.decks = true;
+  $('p-decks').innerHTML = '<div class="spin"></div>';
+  var need = [api('adminDecks')];
+  if (!A.products.length) need.push(api('adminCatalog').then(function (res) { A.products = res.products; A.brands = res.brands; }));
+  if (!A.companies.length && !A.loaded.companies) need.push(api('adminCompanies').then(function (res) { A.companies = res.companies; A.contacts = res.contacts; }).catch(function () {}));
+  Promise.all(need).then(function (r) { A.decks = r[0].decks; renderDecks(); })
+    .catch(function (e) { $('p-decks').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+}
+
+function renderDecks() {
+  $('p-decks').innerHTML =
+    '<div class="panel-head"><h2>Product decks</h2><span class="sp"></span>' +
+      '<button class="btn primary small" id="dkNew">+ Deck</button></div>' +
+    '<p class="note" style="margin-top:-6px">Pick products, get a PDF and a PowerPoint with image, specs, MOQ, price tiers and stock as of now, under the company identity in Settings. Files land in Drive under Merchforce / Decks and can be sent from here.</p>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>Deck</th><th>For</th><th class="num">Products</th><th>Created</th><th>Files</th><th>Sent to</th><th></th>' +
+    '</tr></thead><tbody id="dkRows"></tbody></table></div>';
+  var tb = $('dkRows');
+  if (!A.decks.length) tb.innerHTML = '<tr><td colspan="7"><div class="empty" style="padding:26px 0">No decks yet.</div></td></tr>';
+  A.decks.forEach(function (d) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><b>' + esc(d.name) + '</b><br><small style="color:var(--ink-3)">' + esc(d.id) + ' · ' + esc(d.created_by) + '</small></td>' +
+      '<td>' + esc(d.company || '—') + '</td>' +
+      '<td class="num">' + d.skus.length + '</td>' +
+      '<td>' + fmtDate(d.created) + '</td>' +
+      '<td>' + (d.pdf_url ? '<a href="' + esc(d.pdf_url) + '" target="_blank">PDF ↗</a>' : '') +
+             (d.pptx_url ? ' · <a href="' + esc(d.pptx_url) + '" target="_blank">PPTX ↗</a>' : '') + '</td>' +
+      '<td><small>' + esc(d.sent_to || '—') + '</small></td>' +
+      '<td class="num"><button class="btn small" data-send="' + esc(d.id) + '">Send</button> ' +
+        '<button class="btn small" data-del="' + esc(d.id) + '" title="Delete deck and its files">×</button></td>';
+    tb.appendChild(tr);
+  });
+  $('dkNew').onclick = newDeck;
+  tb.querySelectorAll('button[data-send]').forEach(function (b) {
+    b.onclick = function () { sendDeck(A.decks.filter(function (x) { return x.id === b.dataset.send; })[0]); };
+  });
+  tb.querySelectorAll('button[data-del]').forEach(function (b) {
+    b.onclick = function () {
+      if (!confirm('Delete this deck and its files from Drive?')) return;
+      b.disabled = true;
+      api('adminDeckDelete', { id: b.dataset.del }).then(function () { toast('Deck deleted'); loadDecks(); })
+        .catch(function (e) { b.disabled = false; toast(e.message); });
+    };
+  });
+}
+
+function newDeck() {
+  var picked = {};
+  var catalogue = A.products.filter(function (p) { return p.visible; });
+  var brands = {};
+  A.brands.forEach(function (b) { brands[b.id] = b.name; });
+  var companies = A.companies.filter(function (c) { return c.active; });
+
+  openDrawer(
+    '<h2 style="margin:0 0 4px">New deck</h2>' +
+    '<p class="note" style="margin:0 0 14px">One page per product: image, specs, MOQ, price tiers and stock as of now. Cover carries the company identity from Settings.</p>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Deck name *</label><input id="dName" placeholder="e.g. Drinkware selection — Sept"></div>' +
+      '<div class="field"><label>Prepared for</label><input id="dCompany" list="dCompanyList" placeholder="company, optional" autocomplete="off">' +
+        '<datalist id="dCompanyList">' + companies.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join('') + '</datalist></div>' +
+    '</div>' +
+    '<div class="section-head" style="margin-top:10px"><h2 style="font-size:15px">Products <span id="dCount" class="pill" style="background:var(--accent-soft);color:var(--accent)">0</span></h2></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:8px">' +
+      '<input id="dFilter" placeholder="filter by name, SKU, brand or category" style="flex:1">' +
+      '<button class="btn small" id="dAll">Select shown</button><button class="btn small" id="dNone">Clear</button>' +
+    '</div>' +
+    '<div id="dList" style="max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:12px"></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:14px">' +
+      '<button class="btn primary" id="dBuild" style="flex:1;justify-content:center">Generate PDF + PPTX</button>' +
+    '</div>' +
+    '<p class="note" id="dOut" style="margin-top:8px"></p>');
+
+  function shown() {
+    var q = $('dFilter').value.trim().toLowerCase();
+    return catalogue.filter(function (p) {
+      if (!q) return true;
+      return [p.sku, p.name, brands[p.brand_id] || '', p.category || ''].join(' ').toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  function paint() {
+    var rows = shown();
+    $('dCount').textContent = String(Object.keys(picked).length);
+    $('dList').innerHTML = rows.length ? rows.map(function (p) {
+      return '<label style="display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer">' +
+        '<input type="checkbox" data-sku="' + esc(p.sku) + '"' + (picked[p.sku] ? ' checked' : '') + '>' +
+        (p.images[0] ? '<img src="' + esc(p.images[0]) + '" style="width:36px;height:36px;object-fit:contain;background:#fff;border-radius:6px">' : '<span style="width:36px;height:36px;border-radius:6px;background:var(--accent-soft);display:inline-block"></span>') +
+        '<span style="flex:1;min-width:0"><b>' + esc(p.name) + '</b><br><small style="color:var(--ink-3)">' + esc(p.sku) + ' · ' + esc(brands[p.brand_id] || '') + ' · MOQ ' + p.moq + ' · ' + qty(p.atp) + ' available</small></span>' +
+        '</label>';
+    }).join('') : '<div class="empty" style="padding:18px 0">Nothing matches</div>';
+    $('dList').querySelectorAll('input[data-sku]').forEach(function (cb) {
+      cb.onchange = function () { if (cb.checked) picked[cb.dataset.sku] = 1; else delete picked[cb.dataset.sku]; $('dCount').textContent = String(Object.keys(picked).length); };
+    });
+  }
+  paint();
+  $('dFilter').oninput = paint;
+  $('dAll').onclick = function () { shown().forEach(function (p) { picked[p.sku] = 1; }); paint(); };
+  $('dNone').onclick = function () { picked = {}; paint(); };
+
+  $('dBuild').onclick = function () {
+    var name = $('dName').value.trim();
+    var skus = Object.keys(picked);
+    if (!name) { $('mErr').textContent = 'Give the deck a name.'; return; }
+    if (!skus.length) { $('mErr').textContent = 'Tick at least one product.'; return; }
+    var coName = $('dCompany').value.trim();
+    var co = companies.filter(function (c) { return c.name.toLowerCase() === coName.toLowerCase(); })[0];
+    $('dBuild').disabled = true; $('mErr').textContent = '';
+    $('dOut').textContent = 'Building ' + skus.length + ' product' + (skus.length === 1 ? '' : 's') + '… images are fetched and both files rendered, so this takes a moment.';
+    api('adminDeckBuild', { name: name, skus: skus, company: coName, company_id: co ? co.id : '' }).then(function (res) {
+      closeDrawer();
+      toast('Deck ' + res.id + ' ready' + (res.missing ? ' · ' + res.missing + ' SKU(s) not found' : ''));
+      loadDecks();
+    }).catch(function (e) { $('dBuild').disabled = false; $('dOut').textContent = ''; $('mErr').textContent = e.message; });
+  };
+}
+
+function sendDeck(d) {
+  var contacts = d.company_id ? contactsOf(d.company_id) : [];
+  openDrawer(
+    '<h2 style="margin:0 0 4px">Send ' + esc(d.name) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">Emails the PDF and PowerPoint links' + (d.company ? ' — prepared for ' + esc(d.company) : '') + '. Goes out through your notification email setup, so it leaves from the configured address.</p>' +
+    '<div class="field"><label>To *</label><input id="sTo" type="email" list="sToList" autocomplete="off">' +
+      '<datalist id="sToList">' + contacts.filter(function (c) { return c.email; }).map(function (c) { return '<option value="' + esc(c.email) + '">' + esc(c.name) + '</option>'; }).join('') + '</datalist></div>' +
+    '<div class="field"><label>Message</label><textarea id="sMsg" rows="4" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit" placeholder="a line or two — the links and the standard footer are added"></textarea></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="sSend" style="width:100%;justify-content:center">Send</button>');
+  $('sSend').onclick = function () {
+    var to = $('sTo').value.trim();
+    if (!to) { $('mErr').textContent = 'Who is it going to?'; return; }
+    $('sSend').disabled = true;
+    api('adminDeckSend', { id: d.id, to: to, message: $('sMsg').value }).then(function (res) {
+      closeDrawer(); toast('Sent via ' + res.via); loadDecks();
+    }).catch(function (e) { $('sSend').disabled = false; $('mErr').textContent = e.message; });
   };
 }
 
