@@ -4,9 +4,17 @@ Supplier operations backend. Fork of [merchforce](https://github.com/RogerDF30/m
 with the public storefront removed: the catalogue is the asset, and publishing it
 publishes it to competitors too.
 
-Staff work entirely from the admin console. Requests are raised on the customer's
+Staff work entirely from the admin console. Enquiries are raised on the customer's
 behalf rather than by the customer browsing a shop, and product information goes
 out as generated documents instead of as a website.
+
+An enquiry runs New → Accepted → PI Sent → PI Accepted; the customer's purchase
+order converts it into an order (PO Received → In Production → Dispatched →
+Delivered → Closed). Each enquiry has a follow-up owner drawn from the staff
+accounts, and My enquiries shows a person their own. Accounts hold the people,
+structured billing and shipping addresses, dated notes and Drive attachments.
+The search box above the tabs covers products, enquiries, orders, accounts and
+contacts.
 
 ## What is here
 

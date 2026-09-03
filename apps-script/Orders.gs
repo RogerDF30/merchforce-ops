@@ -482,6 +482,10 @@ function orderPayload_(hit, forClient) {
     out.token = r.token || '';
     out.folder_id = r.folder_id || '';
     out.place_of_supply = r.place_of_supply || '';
+    out.company_id = r.company_id || '';
+    out.raised_by = r.raised_by || '';
+    out.assigned_to = String(r.assigned_to || '');
+    out.assigned_name = r.assigned_name || '';
   }
   return out;
 }

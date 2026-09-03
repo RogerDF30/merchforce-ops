@@ -28,9 +28,17 @@ var SHEETS = {
                  'pi_number', 'pi_url', 'pi_file_id', 'pi_total', 'pi_valid_till',
                  'po_number', 'po_url', 'po_file_id', 'ship_address', 'place_of_supply',
                  // phase 2 (appended — never reorder the columns above)
-                 'company_id', 'raised_by'],
+                 'company_id', 'raised_by',
+                 // follow-up owner (appended)
+                 'assigned_to', 'assigned_name'],
   Companies:    ['company_id', 'name', 'gstin', 'phone', 'email', 'billing_address',
-                 'ship_address', 'state_code', 'owner', 'notes', 'active', 'created', 'updated'],
+                 'ship_address', 'state_code', 'owner', 'notes', 'active', 'created', 'updated',
+                 // accounts (appended): owner is a staff login; structured addresses. billing_address
+                 // and ship_address are still written, composed from the parts, so the PI keeps working.
+                 'owner_email', 'bill_line1', 'bill_line2', 'bill_city', 'bill_state', 'bill_pin', 'bill_country',
+                 'ship_same', 'ship_line1', 'ship_line2', 'ship_city', 'ship_state', 'ship_pin', 'ship_country'],
+  AccountNotes: ['note_id', 'company_id', 'ts', 'author', 'text'],
+  AccountFiles: ['file_id', 'company_id', 'name', 'url', 'drive_id', 'mime', 'size', 'uploaded_by', 'ts'],
   Contacts:     ['contact_id', 'company_id', 'name', 'email', 'phone', 'role',
                  'consent', 'consent_ts', 'consent_source', 'unsubscribed', 'created'],
   Decks:        ['deck_id', 'name', 'skus', 'company_id', 'company', 'pdf_url', 'pptx_url',
@@ -87,7 +95,8 @@ var DEFAULT_SETTINGS = {
   pi_prefix: 'PI', pi_validity_days: '15',
   // Deck design: colours as #RRGGBB, layout compact (two products per page or slide) | spacious (one)
   deck_accent: '#2447F5', deck_ink: '#1D1D1F', deck_muted: '#6E6E73', deck_plate: '#F5F5F7', deck_layout: 'compact',
-  session_minutes: '30',        // staff sign-in lapses after this much inactivity
+  session_minutes: '30',        // console locks after this much inactivity while it is open
+  session_days: '30',           // a sign-in survives reloads and reopens for this long
   reorder_alert: 'off',         // off | daily: email notify_email when products fall below their reorder point
   site_url: '',   // where order.html lives, for links in emails
   primary_color: '#1a1f36',

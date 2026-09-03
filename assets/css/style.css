@@ -464,3 +464,10 @@ a { color: var(--accent); text-decoration: none; }
 .ppick-none { padding: 14px; color: var(--ink-3); font-weight: 600; text-align: center; }
 .pthumb { object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 8px; flex: none; display: inline-block; vertical-align: middle; }
 .pthumb.no-img { background: var(--accent-soft); border-color: transparent; }
+
+/* universal search */
+.gsearch { margin: 4px 0 14px; }
+.gsearch input { width: 100%; padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; font-size: 14px; background: #fff; outline: none; }
+.gsearch input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.gs-panel { max-height: 480px; }
+.gs-group { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 10px 12px 4px; background: var(--bg, #fafafa); border-bottom: 1px solid var(--line); }

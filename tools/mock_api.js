@@ -86,6 +86,8 @@ const db = {
   db.supply.push({ so_id: 'SO-0002', kind: 'make', sku: 'DN3224', name: nameOf('DN3224'), qty: 300, vendor: '', status: 'Planned',
     expected: dstr(new Date(Date.now() + 14 * 864e5)), ref: '', note: 'Run after the Marlow batch', created_by: 'Demo Staffer',
     created: new Date(Date.now() - 1 * 864e5).toISOString(), updated: new Date().toISOString(), received_qty: 0, received: '' });
+  db.requests.slice(0, 3).forEach(r => { r.assigned_to = 'staff@example.com'; r.assigned_name = 'Demo Staffer'; r.raised_by = 'Demo Staffer'; });
+  db.requests[0].company_id = 'CO-0001';
   // reserve stock for the confirmed one
   const conf = db.requests.find(r => r.status === 'PI Accepted');
   if (conf) { conf.stock_state = 'reserved';
@@ -133,6 +135,7 @@ function orderOut(r) {
     pi_total: r.pi_total || 0, pi_valid_till: r.pi_valid_till || '',
     po_number: r.po_number || '', po_url: r.po_url || '', token: r.token,
     folder_id: r.folder_id || '', stock_state: r.stock_state || '', place_of_supply: r.place_of_supply || '',
+    company_id: r.company_id || '', raised_by: r.raised_by || '', assigned_to: r.assigned_to || '', assigned_name: r.assigned_name || '',
     lines: db.lines.filter(l => l.request_id === r.request_id).map(l => ({
       sku: l.sku, name: l.name, qty: l.qty, unit_price: l.unit_price, line_total: l.line_total,
       list_price: l.list_price || null, gst: l.gst || 0,
@@ -211,7 +214,30 @@ function stockBoard() {
     reorder_alert: db.settings.reorder_alert || 'off', notify_email: db.settings.notify_email || '' };
 }
 
+db.staff = [{ email: 'staff@example.com', name: 'Demo Staffer', role: 'admin' }, { email: 'asha@example.com', name: 'Asha Rao', role: 'staff' }];
+db.accountNotes = [{ id: 'NT-0001', company_id: 'CO-0001', ts: new Date(Date.now() - 2 * 864e5).toISOString(), author: 'Demo Staffer', text: 'Prefers deliveries before 11am. Rate contract due for renewal in March.' }];
+db.accountFiles = [];
+db.company = { id: 'CO-0001', name: 'Hourglass Essentials Pvt Ltd', gstin: '29AABCH6959B1ZG', phone: '9632950798', email: 'roger@companystore.io',
+  billing_address: '#39 Krishna Reddy Colony, Domlur Layout, Bengaluru, Karnataka 560071, India', ship_address: '', state_code: '29', owner: 'Demo Staffer', owner_email: 'staff@example.com', notes: '',
+  bill: { line1: '#39 Krishna Reddy Colony', line2: 'Domlur Layout', city: 'Bengaluru', state: 'Karnataka', pin: '560071', country: 'India' }, ship: {}, ship_same: true, active: true };
 const ACTIONS = {
+  adminStaffList: () => ({ ok: true, staff: db.staff }),
+  adminRequestAssign: b => { const r = db.requests.find(x => x.request_id === b.id); if (!r) return { ok: false, error: 'Enquiry not found' };
+    const u = db.staff.find(x => x.email === b.assigned_to); if (b.assigned_to && !u) return { ok: false, error: 'No active staff account with that email' };
+    r.assigned_to = b.assigned_to || ''; r.assigned_name = u ? u.name : ''; return { ok: true, id: b.id, assigned_to: r.assigned_to, assigned_name: r.assigned_name }; },
+  adminAccountNotes: b => ({ ok: true, notes: db.accountNotes.filter(n => n.company_id === b.company_id).slice().reverse(), files: db.accountFiles.filter(f => f.company_id === b.company_id).slice().reverse() }),
+  adminAccountNoteSave: b => { if (!b.text) return { ok: false, error: 'Write something first' }; const n = { id: 'NT-' + String(db.accountNotes.length + 1).padStart(4, '0'), company_id: b.company_id, ts: new Date().toISOString(), author: 'Demo Staffer', text: b.text }; db.accountNotes.push(n); return { ok: true, note: n }; },
+  adminAccountNoteDelete: b => { db.accountNotes = db.accountNotes.filter(n => n.id !== b.id); return { ok: true }; },
+  adminAccountFileUpload: b => { const f = { id: 'AF-' + String(db.accountFiles.length + 1).padStart(4, '0'), company_id: b.company_id, name: b.filename, url: 'https://drive.google.com/file/d/mock/view', mime: b.mime, size: Math.round((b.data || '').length * 0.75), uploaded_by: 'Demo Staffer', ts: new Date().toISOString() }; db.accountFiles.push(f); return { ok: true, file: f }; },
+  adminAccountFileDelete: b => { db.accountFiles = db.accountFiles.filter(f => f.id !== b.id); return { ok: true }; },
+  adminCompanySave: b => { const d = b.company || {}; if (!d.name) return { ok: false, error: 'Company name is required' };
+    const id = d.id || 'CO-' + String(2 + (db.extraCompanies = db.extraCompanies || []).length).padStart(4, '0');
+    const bill = Object.assign({ country: 'India' }, d.bill || {}); const ship = d.ship_same === false ? Object.assign({ country: 'India' }, d.ship || {}) : bill;
+    const text = a => [a.line1, a.line2, a.city, [a.state, a.pin].filter(Boolean).join(' '), a.country].filter(Boolean).join(', ');
+    const rec = { id, name: d.name, gstin: d.gstin || '', phone: d.phone || '', email: d.email || '', billing_address: text(bill), ship_address: text(ship), state_code: d.state_code || '29',
+      owner: d.owner || '', owner_email: d.owner_email || '', notes: d.notes || '', bill, ship, ship_same: d.ship_same !== false, active: d.active !== false, contacts: 0, orders: 0, value: 0, notes_count: 0, files_count: 0 };
+    if (id === 'CO-0001') Object.assign(db.company, rec); else { const i = db.extraCompanies.findIndex(c => c.id === id); if (i >= 0) db.extraCompanies[i] = rec; else db.extraCompanies.push(rec); }
+    return { ok: true, id }; },
   adminStock: () => stockBoard(),
   adminSupplyFields: b => { const p = prodOf(String(b.sku || '').toUpperCase()) || prodOf(b.sku); if (!p) return { ok: false, error: 'Product not found: ' + b.sku };
     p.supply_mode = b.supply_mode === 'make' ? 'make' : 'buy'; p.vendor = b.vendor || ''; p.vendor_moq = Number(b.vendor_moq) || ''; p.batch_qty = Number(b.batch_qty) || '';
@@ -248,10 +274,7 @@ const ACTIONS = {
   adminDeckSend: b => { const d = (db.decks || []).find(x => x.id === b.id); if (d) { d.sent_to = b.to; } return { ok: true, id: b.id, via: 'backend' }; },
   adminDeckDelete: b => { db.decks = (db.decks || []).filter(x => x.id !== b.id); return { ok: true }; },
   adminRequestCreate: b => ACTIONS.request(b),
-  adminCompanies: () => ({ ok: true, companies: [
-      { id: 'CO-0001', name: 'Hourglass Essentials Pvt Ltd', gstin: '29AABCH6959B1ZG', phone: '9632950798', email: 'roger@companystore.io',
-        billing_address: '', ship_address: 'Bengaluru', state_code: '29', owner: 'Roger', notes: '', active: true, contacts: 1, orders: 2, value: 87900 }
-    ], contacts: [
+  adminCompanies: () => ({ ok: true, companies: [Object.assign({}, db.company, { contacts: 1, orders: db.requests.filter(r => r.company_id === 'CO-0001').length, value: 87900, notes_count: db.accountNotes.length, files_count: db.accountFiles.length })].concat(db.extraCompanies || []), contacts: [
       { id: 'CT-0001', company_id: 'CO-0001', name: 'Roger Daniel', email: 'roger@companystore.io', phone: '9632950798', role: 'buyer', consent: false, consent_ts: '', consent_source: '', unsubscribed: false }
     ], unlinked_names: 0, unlinked_orders: 0 }),
   site: () => ({
@@ -290,7 +313,8 @@ const ACTIONS = {
         line_total: price * l.qty, list_price: price, gst: p.gst_rate, hsn: p.hsn || '' });
     });
     db.requests.push({
-      request_id: id, created: new Date().toISOString(), status: 'New', company: b.company,
+      request_id: id, created: new Date().toISOString(), status: 'New', company: b.company, company_id: b.company_id || '',
+      raised_by: b.actor || 'Demo Staffer', assigned_to: b.assigned_to || '', assigned_name: b.assigned_to ? ((db.staff.find(u => u.email === b.assigned_to) || {}).name || b.assigned_to) : '',
       contact: b.contact, email: b.email, phone: b.phone || '', gstin: b.gstin || '',
       notes: b.notes || '', user_email: b.user_email || '', total_est: total,
       status_dates: JSON.stringify({ New: new Date().toISOString() }), admin_notes: '', updated: new Date().toISOString()
@@ -625,6 +649,7 @@ http.createServer((req, res) => {
         else if (b.action && b.action.startsWith('admin') && b.adminKey !== ADMIN_PASS && b.session !== SESS) {
           out = { ok: false, error: b.session ? 'Your session has expired. Sign in again.' : 'Bad admin key' };
         }
+        else if (b.action === 'adminUnlock' && b.session === SESS) out = Object.assign(ACTIONS.adminUnlock(b), { user: { email: 'staff@example.com', name: 'Demo Staffer', role: 'admin' } });
         else if (ACTIONS[b.action]) out = ACTIONS[b.action](b);
         else out = { ok: false, error: 'Unknown action: ' + b.action };
       } catch (e) { out = { ok: false, error: e.message }; }

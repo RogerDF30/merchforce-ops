@@ -4,7 +4,7 @@ function fnAdminUnlock_(p) {
   audit_(p.actor || 'admin', 'admin_unlock', '', '');
   return ok_({
     settings: getSettings_(), relay_status: relayStatus_(),
-    user: { name: p.actor, role: p.role || 'admin' },
+    user: { name: p.actor, email: p.actor_email || '', role: p.role || 'admin' },
     session_minutes: sessionMinutes_()
   });
 }
@@ -161,6 +161,15 @@ function fnAdminImageUpload_(p) {
   var url = 'https://lh3.googleusercontent.com/d/' + file.getId() + '=w1200';
   audit_(p.actor || 'admin', 'image_upload', p.filename, file.getId());
   return ok_({ url: url, file_id: file.getId() });
+}
+
+/** Names and emails of active staff, for owner and follow-up dropdowns. Any signed-in person may read it. */
+function fnAdminStaffList_(p) {
+  return ok_({
+    staff: readRows_('Users').filter(function (u) { return isTrue_(u.active); }).map(function (u) {
+      return { email: String(u.email).toLowerCase(), name: u.name || u.email, role: u.role || 'staff' };
+    }).sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); })
+  });
 }
 
 function fnAdminUsers_(p) {

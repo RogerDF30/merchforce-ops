@@ -45,8 +45,18 @@ function fnStaffLogin_(p) {
   });
 }
 
+function sessionDays_() {
+  var n = toNum_(getSettings_().session_days);
+  return n >= 1 && n <= 365 ? n : 30;
+}
+
+/**
+ * The token lives session_days and every call re-issues it, so anyone who keeps
+ * using the console stays signed in across reloads and reopens. The inactivity
+ * lock (session_minutes) is enforced by the console while it is open.
+ */
 function makeStaffSession_(user) {
-  var exp = now_().getTime() + sessionMinutes_() * 60 * 1000;
+  var exp = now_().getTime() + sessionDays_() * 24 * 60 * 60 * 1000;
   var payload = JSON.stringify({ e: user.email, n: user.name, r: user.role, x: exp });
   return Utilities.base64EncodeWebSafe(payload) + '.' + sign_(payload);
 }

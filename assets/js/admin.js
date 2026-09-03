@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v24';
+var BUILD = 'v25';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -109,7 +109,11 @@ function enterConsole(res) {
   $('lock').hidden = true;
   $('console').hidden = false;
   A.loaded = {};
-  loadRequests();
+  A.requestsAt = 0; A.requests = [];
+  document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.toggle('on', x.dataset.t === 'enquiries'); });
+  document.querySelectorAll('.panel').forEach(function (p) { p.hidden = p.id !== 'p-enquiries'; });
+  loadEnquiries();
+  if (!A._searchWired) { wireSearch(); A._searchWired = true; }
   armIdle();
 }
 
@@ -183,13 +187,20 @@ if ($('buildTag')) $('buildTag').textContent = BUILD;
 
 // A session survives a reload; the server decides whether it is still live.
 if (restoreSession()) {
-  api('adminUnlock').then(enterConsole).catch(function () { lock(); });
+  var restore = function (again) {
+    api('adminUnlock').then(enterConsole).catch(function (e) {
+      if (/expired|sign in again|bad admin key/i.test(e.message)) { lock('Your sign-in has lapsed. Sign in again.'); return; }
+      if (again) setTimeout(function () { restore(false); }, 1500);
+      else lock('Could not reach the backend: ' + e.message);
+    });
+  };
+  restore(true);
 }
 $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
 $('lockNow').onclick = function () { lock('Signed out.'); };
 
 /* ---------- tabs ---------- */
-var LOADERS = { requests: loadRequests, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, companies: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
+var LOADERS = { enquiries: loadEnquiries, orders: loadOrders, mine: loadMine, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, accounts: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
 document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
     document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
@@ -201,66 +212,593 @@ document.querySelectorAll('#tabs .chip').forEach(function (t) {
   };
 });
 
-/* ================= ORDERS ================= */
+/* ================= ENQUIRIES · ORDERS · MY ENQUIRIES ================= */
+/* One dataset (adminOrders) feeds three views. An enquiry becomes an order the
+   moment a purchase order lands: PO Received and everything after it is an
+   order; New through PI Accepted is an enquiry. */
 var STAGES = ['New', 'Accepted', 'PI Sent', 'PI Accepted', 'PO Received', 'In Production', 'Dispatched', 'Delivered'];
+var ENQUIRY_STAGES = ['New', 'Accepted', 'PI Sent', 'PI Accepted'];
+var ORDER_STAGES = ['PO Received', 'In Production', 'Dispatched', 'Delivered', 'Closed'];
+var STATES = [['01', 'Jammu & Kashmir'], ['02', 'Himachal Pradesh'], ['03', 'Punjab'], ['04', 'Chandigarh'], ['05', 'Uttarakhand'], ['06', 'Haryana'], ['07', 'Delhi'], ['08', 'Rajasthan'], ['09', 'Uttar Pradesh'],
+  ['10', 'Bihar'], ['11', 'Sikkim'], ['12', 'Arunachal Pradesh'], ['13', 'Nagaland'], ['14', 'Manipur'], ['15', 'Mizoram'], ['16', 'Tripura'], ['17', 'Meghalaya'], ['18', 'Assam'], ['19', 'West Bengal'],
+  ['20', 'Jharkhand'], ['21', 'Odisha'], ['22', 'Chhattisgarh'], ['23', 'Madhya Pradesh'], ['24', 'Gujarat'], ['26', 'Dadra & Nagar Haveli and Daman & Diu'], ['27', 'Maharashtra'], ['29', 'Karnataka'], ['30', 'Goa'],
+  ['31', 'Lakshadweep'], ['32', 'Kerala'], ['33', 'Tamil Nadu'], ['34', 'Puducherry'], ['35', 'Andaman & Nicobar Islands'], ['36', 'Telangana'], ['37', 'Andhra Pradesh'], ['38', 'Ladakh'], ['97', 'Other Territory']];
+function stateName(code) { var s = STATES.filter(function (x) { return x[0] === String(code); })[0]; return s ? s[1] : ''; }
+function stateCode(name) { var k = String(name || '').trim().toLowerCase(); var s = STATES.filter(function (x) { return x[1].toLowerCase() === k; })[0]; return s ? s[0] : ''; }
+function stateOptions(selectedCode, blankLabel) {
+  return '<option value="">' + esc(blankLabel || 'Choose a state') + '</option>' + STATES.map(function (s) {
+    return '<option value="' + s[0] + '"' + (s[0] === String(selectedCode) ? ' selected' : '') + '>' + esc(s[1]) + '</option>';
+  }).join('');
+}
 
-function loadRequests() {
-  A.loaded.requests = true;
-  $('p-requests').innerHTML = '<div class="spin"></div>';
-  api('adminOrders').then(function (res) {
-    A.requests = res.orders;
-    A.siteUrl = res.site_url || '';
-    renderRequests();
-  }).catch(function (e) { $('p-requests').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+function isOrder(r) { return ORDER_STAGES.indexOf(r.status) >= 0 || (r.status === 'Cancelled' && !!(r.status_dates || {})['PO Received']); }
+function isMine(r) {
+  var me = A.user || {};
+  if (me.email && r.assigned_to) return String(r.assigned_to).toLowerCase() === String(me.email).toLowerCase();
+  return !!me.name && (r.assigned_name === me.name || r.raised_by === me.name);
+}
+function ownerCell(r) {
+  return r.assigned_name ? esc(r.assigned_name) : '<span style="color:var(--ink-3)">unassigned</span>';
+}
+
+var STAFF_CACHE = null;
+function staffList() {
+  if (STAFF_CACHE) return Promise.resolve(STAFF_CACHE);
+  return api('adminStaffList').then(function (res) { STAFF_CACHE = res.staff; return STAFF_CACHE; }).catch(function () { return []; });
+}
+function staffOptions(staff, selectedEmail, blankLabel) {
+  return '<option value="">' + esc(blankLabel || 'Unassigned') + '</option>' + staff.map(function (u) {
+    return '<option value="' + esc(u.email) + '"' + (u.email === String(selectedEmail || '').toLowerCase() ? ' selected' : '') + '>' + esc(u.name) + '</option>';
+  }).join('');
 }
 
 function stat(v, l) { return '<div class="stat"><div class="stat-n">' + v + '</div><div class="stat-l">' + l + '</div></div>'; }
 
-function renderRequests() {
-  var active = A.requests.filter(function (r) { return r.active; });
-  var done = A.requests.filter(function (r) { return !r.active; });
-  A.orderView = A.orderView || 'active';
-  var rows = A.orderView === 'active' ? active : done;
-  $('p-requests').innerHTML =
-    '<div class="stat-row">' +
-      stat(A.requests.filter(function (r) { return r.status === 'New'; }).length, 'Awaiting decision') +
-      stat(A.requests.filter(function (r) { return r.status === 'PI Sent'; }).length, 'PI with client') +
-      stat(A.requests.filter(function (r) { return ['PO Received', 'In Production', 'Dispatched'].indexOf(r.status) >= 0; }).length, 'In fulfilment') +
-      stat(inr(active.reduce(function (s, r) { return s + (r.pi_total || r.total_est); }, 0)), 'Active value') +
-    '</div>' +
-    '<div class="panel-head"><h2>Orders</h2>' +
-      '<div class="seg" id="ordSeg">' +
-        '<button data-v="active" class="' + (A.orderView === 'active' ? 'on' : '') + '">Active (' + active.length + ')</button>' +
-        '<button data-v="done" class="' + (A.orderView === 'done' ? 'on' : '') + '">Completed (' + done.length + ')</button>' +
-      '</div>' +
-      '<span class="sp"></span>' +
-      '<button class="btn small" id="rReload">Refresh</button>' +
-      '<button class="btn primary small" id="rNew" style="margin-left:8px">+ Request</button></div>' +
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
-      '<th>ID</th><th>Created</th><th>Company</th><th>Docs</th><th class="num">Value</th><th>Stock</th><th>Status</th>' +
-    '</tr></thead><tbody id="rRows"></tbody></table></div>';
-  $('rReload').onclick = loadRequests;
-  $('rNew').onclick = newRequest;
-  $('ordSeg').querySelectorAll('button').forEach(function (b) {
-    b.onclick = function () { A.orderView = b.dataset.v; renderRequests(); };
+/* ---------- data ---------- */
+function loadRequests() {
+  return api('adminOrders').then(function (res) {
+    A.requests = res.orders;
+    A.siteUrl = res.site_url || '';
+    A.requestsAt = Date.now();
+    paintRequestViews();
+  }).catch(function (e) {
+    ['p-enquiries', 'p-orders', 'p-mine'].forEach(function (id) { if (A.loaded[id.slice(2)]) $(id).innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
   });
-  var tb = $('rRows');
-  tb.innerHTML = rows.length ? '' : '<tr><td colspan="7" class="empty">Nothing here</td></tr>';
+}
+function ensureRequests() {
+  return A.requests && A.requestsAt ? Promise.resolve() : loadRequests();
+}
+function paintRequestViews() {
+  if (A.loaded.enquiries) renderEnquiries();
+  if (A.loaded.orders) renderOrders();
+  if (A.loaded.mine) renderMine();
+}
+function loadEnquiries() { A.loaded.enquiries = true; $('p-enquiries').innerHTML = '<div class="spin"></div>'; ensureRequests().then(renderEnquiries); }
+function loadOrders() { A.loaded.orders = true; $('p-orders').innerHTML = '<div class="spin"></div>'; ensureRequests().then(renderOrders); }
+function loadMine() { A.loaded.mine = true; $('p-mine').innerHTML = '<div class="spin"></div>'; ensureRequests().then(renderMine); }
+
+/* ---------- shared table ---------- */
+function requestRows(tbId, rows, kind) {
+  var tb = $(tbId);
+  var cols = kind === 'order' ? 8 : 7;
+  tb.innerHTML = rows.length ? '' : '<tr><td colspan="' + cols + '" class="empty" style="padding:26px 0">Nothing here</td></tr>';
   rows.forEach(function (r) {
     var tr = document.createElement('tr');
     tr.className = 'click';
-    tr.innerHTML = '<td><b>' + esc(r.id) + '</b></td><td>' + fmtDate(r.created) + '</td>' +
+    var stock = r.stock_state === 'reserved' ? '<span class="pill" style="background:var(--warn-soft);color:var(--warn)">held</span>'
+      : r.stock_state === 'deducted' ? '<span class="pill" style="background:var(--ok-soft);color:var(--ok)">deducted</span>' : '—';
+    var docs = (r.pi_url ? '<a href="' + esc(r.pi_url) + '" target="_blank" onclick="event.stopPropagation()">PI</a>' : '<span style="color:var(--ink-3)">—</span>') +
+      ' · ' + (r.po_url ? '<a href="' + esc(r.po_url) + '" target="_blank" onclick="event.stopPropagation()">PO</a>' : '<span style="color:var(--ink-3)">—</span>');
+    tr.innerHTML = '<td><b>' + esc(r.id) + '</b></td><td>' + fmtDate(kind === 'order' && r.status_dates['PO Received'] ? r.status_dates['PO Received'] : r.created) + '</td>' +
       '<td>' + esc(r.company) + '<br><small style="color:var(--ink-3)">' + esc(r.contact) + '</small></td>' +
-      '<td style="font-size:12px">' + (r.pi_url ? '<a href="' + esc(r.pi_url) + '" target="_blank" onclick="event.stopPropagation()">PI</a>' : '<span style="color:var(--ink-3)">—</span>') +
-        ' · ' + (r.po_url ? '<a href="' + esc(r.po_url) + '" target="_blank" onclick="event.stopPropagation()">PO</a>' : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
+      '<td>' + ownerCell(r) + '</td>' +
+      (kind === 'order' ? '<td>' + esc(r.po_number || '—') + '</td>' : '') +
+      '<td style="font-size:12px">' + docs + '</td>' +
       '<td class="num">' + inr(r.pi_total || r.total_est) + '</td>' +
-      '<td style="font-size:12px">' + (r.stock_state === 'reserved' ? '<span class="pill" style="background:var(--warn-soft);color:var(--warn)">held</span>'
-        : r.stock_state === 'deducted' ? '<span class="pill" style="background:var(--ok-soft);color:var(--ok)">deducted</span>' : '—') + '</td>' +
+      (kind === 'order' ? '<td style="font-size:12px">' + stock + '</td>' : '') +
       '<td>' + statusPill(r.status) + '</td>';
     tr.onclick = function () { openOrder(r); };
     tb.appendChild(tr);
   });
 }
+function requestTable(tbId, kind) {
+  return '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+    '<th>ID</th><th>' + (kind === 'order' ? 'PO received' : 'Created') + '</th><th>Account</th><th>Owner</th>' +
+    (kind === 'order' ? '<th>PO no.</th>' : '') + '<th>Docs</th><th class="num">Value</th>' +
+    (kind === 'order' ? '<th>Stock</th>' : '') + '<th>Status</th>' +
+    '</tr></thead><tbody id="' + tbId + '"></tbody></table></div>';
+}
+
+/* ---------- enquiries ---------- */
+function renderEnquiries() {
+  var all = A.requests.filter(function (r) { return !isOrder(r); });
+  var open = all.filter(function (r) { return ENQUIRY_STAGES.indexOf(r.status) >= 0; });
+  var closed = all.filter(function (r) { return ENQUIRY_STAGES.indexOf(r.status) < 0; });
+  A.enqView = A.enqView || 'open';
+  var rows = A.enqView === 'open' ? open : closed;
+  var count = function (st) { return open.filter(function (r) { return r.status === st; }).length; };
+  $('p-enquiries').innerHTML =
+    '<div class="stat-row">' +
+      stat(count('New'), 'New, awaiting decision') + stat(count('Accepted'), 'Accepted, to quote') +
+      stat(count('PI Sent'), 'PI with client') + stat(count('PI Accepted'), 'PI accepted, awaiting PO') +
+      stat(inr(open.reduce(function (s, r) { return s + (r.pi_total || r.total_est); }, 0)), 'Open pipeline') +
+    '</div>' +
+    '<div class="panel-head"><h2>Enquiries</h2>' +
+      '<div class="seg" id="enqSeg">' +
+        '<button data-v="open" class="' + (A.enqView === 'open' ? 'on' : '') + '">Open (' + open.length + ')</button>' +
+        '<button data-v="closed" class="' + (A.enqView === 'closed' ? 'on' : '') + '">Closed (' + closed.length + ')</button>' +
+      '</div><span class="sp"></span>' +
+      '<button class="btn small" id="eReload">Refresh</button>' +
+      '<button class="btn primary small" id="rNew" style="margin-left:8px">+ Enquiry</button></div>' +
+    '<p class="note" style="margin-top:-6px">An enquiry runs from New to PI Accepted. When the client\'s purchase order lands it moves to Orders.</p>' +
+    requestTable('eRows', 'enquiry');
+  requestRows('eRows', rows, 'enquiry');
+  $('eReload').onclick = loadRequests;
+  $('rNew').onclick = newRequest;
+  $('enqSeg').querySelectorAll('button').forEach(function (b) { b.onclick = function () { A.enqView = b.dataset.v; renderEnquiries(); }; });
+}
+
+/* ---------- orders ---------- */
+function renderOrders() {
+  var all = A.requests.filter(isOrder);
+  var active = all.filter(function (r) { return r.active; });
+  var done = all.filter(function (r) { return !r.active; });
+  A.orderView = A.orderView || 'active';
+  var rows = A.orderView === 'active' ? active : done;
+  var count = function (st) { return active.filter(function (r) { return r.status === st; }).length; };
+  $('p-orders').innerHTML =
+    '<div class="stat-row">' +
+      stat(count('PO Received'), 'PO received') + stat(count('In Production'), 'In production') + stat(count('Dispatched'), 'Dispatched') +
+      stat(inr(active.reduce(function (s, r) { return s + (r.pi_total || r.total_est); }, 0)), 'Active order value') +
+    '</div>' +
+    '<div class="panel-head"><h2>Orders</h2>' +
+      '<div class="seg" id="ordSeg">' +
+        '<button data-v="active" class="' + (A.orderView === 'active' ? 'on' : '') + '">Active (' + active.length + ')</button>' +
+        '<button data-v="done" class="' + (A.orderView === 'done' ? 'on' : '') + '">Completed (' + done.length + ')</button>' +
+      '</div><span class="sp"></span>' +
+      '<button class="btn small" id="oReload">Refresh</button></div>' +
+    '<p class="note" style="margin-top:-6px">Converted enquiries: a purchase order is on file. Active runs from PO Received to Dispatched; Delivered, Closed and Cancelled are completed.</p>' +
+    requestTable('oRows', 'order');
+  requestRows('oRows', rows, 'order');
+  $('oReload').onclick = loadRequests;
+  $('ordSeg').querySelectorAll('button').forEach(function (b) { b.onclick = function () { A.orderView = b.dataset.v; renderOrders(); }; });
+}
+
+/* ---------- my enquiries ---------- */
+function renderMine() {
+  var mine = A.requests.filter(isMine);
+  var enq = mine.filter(function (r) { return !isOrder(r) && ENQUIRY_STAGES.indexOf(r.status) >= 0; });
+  var ord = mine.filter(function (r) { return isOrder(r) && r.active; });
+  var closed = mine.filter(function (r) { return enq.indexOf(r) < 0 && ord.indexOf(r) < 0; });
+  var me = A.user || {};
+  $('p-mine').innerHTML =
+    '<div class="panel-head"><h2>My enquiries</h2><span class="sp"></span><button class="btn small" id="mReload">Refresh</button>' +
+      '<button class="btn primary small" id="rNew2" style="margin-left:8px">+ Enquiry</button></div>' +
+    '<p class="note" style="margin-top:-6px">Everything assigned to ' + esc(me.name || 'you') + ' for follow-up' + (me.email ? '' : ' (master key: matched by name)') + '. Reassign from inside an enquiry.</p>' +
+    '<div class="stat-row">' + stat(enq.length, 'open enquiries') + stat(ord.length, 'active orders') +
+      stat(enq.filter(function (r) { return r.status === 'New'; }).length, 'need a decision') +
+      stat(enq.filter(function (r) { return r.status === 'PI Sent'; }).length, 'PI awaiting reply') + '</div>' +
+    '<h3 style="margin:14px 0 6px">Open enquiries</h3>' + requestTable('mRowsE', 'enquiry') +
+    '<h3 style="margin:18px 0 6px">Active orders</h3>' + requestTable('mRowsO', 'order') +
+    (closed.length ? '<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--ink-2)">Completed and closed (' + closed.length + ')</summary>' + requestTable('mRowsC', 'enquiry') + '</details>' : '');
+  requestRows('mRowsE', enq, 'enquiry');
+  requestRows('mRowsO', ord, 'order');
+  if (closed.length) requestRows('mRowsC', closed, 'enquiry');
+  $('mReload').onclick = loadRequests;
+  $('rNew2').onclick = newRequest;
+}
+
+/* ---------- generic dropdown picker (company, contact, anything) ---------- */
+/**
+ * items: array; opts.text(item) label, opts.sub(item) small line, opts.value(item) what goes in the input,
+ * opts.onPick(item), opts.free: true keeps free text allowed (a new name), opts.empty: message when nothing matches.
+ */
+function attachPicker(input, panel, items, opts) {
+  var idx = -1, shown = [];
+  function list() { return typeof items === 'function' ? items() : items; }
+  function rows() {
+    var q = input.value.trim().toLowerCase();
+    return list().filter(function (it) {
+      return !q || (opts.text(it) + ' ' + (opts.sub ? opts.sub(it) : '')).toLowerCase().indexOf(q) >= 0;
+    }).slice(0, 40);
+  }
+  function paint() {
+    shown = rows(); idx = -1;
+    panel.innerHTML = shown.length ? shown.map(function (it, i) {
+      return '<div class="ppick-row" data-i="' + i + '"><div class="ppick-txt"><b>' + esc(opts.text(it)) + '</b>' +
+        (opts.sub && opts.sub(it) ? '<small>' + esc(opts.sub(it)) + '</small>' : '') + '</div></div>';
+    }).join('') : '<div class="ppick-none">' + esc(opts.empty || 'No match') + (opts.free && input.value.trim() ? ' · keeping "' + esc(input.value.trim()) + '" as typed' : '') + '</div>';
+    panel.hidden = false;
+    panel.querySelectorAll('.ppick-row').forEach(function (r) {
+      r.onmousedown = function (e) { e.preventDefault(); pick(shown[Number(r.dataset.i)]); };
+    });
+  }
+  function pick(it) {
+    if (!it) return;
+    input.value = opts.value ? opts.value(it) : opts.text(it);
+    panel.hidden = true;
+    if (opts.onPick) opts.onPick(it);
+  }
+  function move(d) {
+    var els = panel.querySelectorAll('.ppick-row');
+    if (!els.length) return;
+    idx = (idx + d + els.length) % els.length;
+    els.forEach(function (el, i) { el.classList.toggle('on', i === idx); });
+    els[idx].scrollIntoView({ block: 'nearest' });
+  }
+  input.addEventListener('focus', paint);
+  input.addEventListener('input', function () { paint(); if (opts.onType) opts.onType(input.value); });
+  input.addEventListener('blur', function () { setTimeout(function () { panel.hidden = true; }, 120); });
+  input.addEventListener('keydown', function (e) {
+    if (panel.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { paint(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    else if (e.key === 'Enter') { if (idx >= 0) { e.preventDefault(); pick(shown[idx]); } else if (!panel.hidden) { e.preventDefault(); panel.hidden = true; } }
+    else if (e.key === 'Escape') { if (!panel.hidden) { panel.hidden = true; e.stopPropagation(); } }
+  });
+  return { refresh: paint, close: function () { panel.hidden = true; } };
+}
+function pickerField(id, label, placeholder, extra) {
+  return '<div class="field"' + (extra || '') + '><label>' + label + '</label><div class="ppick-wrap">' +
+    '<input id="' + id + '" placeholder="' + esc(placeholder || '') + '" autocomplete="off"><div class="ppick" id="' + id + 'Pick" hidden></div></div></div>';
+}
+
+/* ================= ACCOUNTS ================= */
+function loadCompanies() {
+  A.loaded.accounts = true;
+  $('p-accounts').innerHTML = '<div class="spin"></div>';
+  api('adminCompanies').then(function (res) {
+    A.companies = res.companies;
+    A.contacts = res.contacts;
+    A.unlinked = { names: res.unlinked_names, orders: res.unlinked_orders };
+    if (A.accountOpen) {
+      var c = A.companies.filter(function (x) { return x.id === A.accountOpen; })[0];
+      if (c) return openAccount(c);
+      A.accountOpen = '';
+    }
+    renderCompanies();
+  }).catch(function (e) { $('p-accounts').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+}
+function contactsOf(companyId) { return A.contacts.filter(function (c) { return c.company_id === companyId; }); }
+function addrLines(a) {
+  if (!a) return '';
+  return [a.line1, a.line2, a.city, [a.state, a.pin].filter(String).join(' '), a.country].filter(String).map(esc).join('<br>');
+}
+
+function renderCompanies() {
+  A.accountOpen = '';
+  var u = A.unlinked || { names: 0, orders: 0 };
+  var q = (A.accountQuery || '').toLowerCase();
+  var rows = A.companies.filter(function (c) { return !q || (c.name + ' ' + c.gstin + ' ' + (c.owner || '') + ' ' + (c.bill && c.bill.city || '')).toLowerCase().indexOf(q) >= 0; });
+  $('p-accounts').innerHTML =
+    '<div class="panel-head"><h2>Accounts</h2>' +
+      '<input id="coFind" placeholder="find an account" value="' + esc(A.accountQuery || '') + '" style="width:240px;margin-left:14px">' +
+      '<span class="sp"></span>' +
+      '<button class="btn primary small" id="coNew">+ Account</button></div>' +
+    '<p class="note" style="margin-top:-6px">Customer accounts, the people at them, and what has been said and filed about each. Enquiries and orders attach to an account.</p>' +
+    (u.names
+      ? '<div class="note2 warn"><strong>' + u.orders + ' enquir' + (u.orders === 1 ? 'y' : 'ies') + ' across ' + u.names + ' company name' + (u.names === 1 ? '' : 's') +
+        ' are not linked to an account.</strong> Import groups them by name, creates one account each and lifts the contact from the most recent one. It is safe to run more than once. ' +
+        '<button class="btn small" id="coImport" style="margin-left:8px">Import from enquiries</button><span id="coImportOut" class="note" style="margin-left:10px"></span></div>'
+      : '') +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>Account</th><th>City</th><th>Owner</th><th class="num">Contacts</th><th class="num">Enquiries</th><th class="num">Value</th><th>Active</th>' +
+    '</tr></thead><tbody id="coRows"></tbody></table></div>';
+  var tb = $('coRows');
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="7"><div class="empty" style="padding:26px 0">' + (A.companies.length ? 'No account matches.' : 'No accounts yet.') + '</div></td></tr>';
+  rows.forEach(function (c) {
+    var tr = document.createElement('tr');
+    tr.className = 'click';
+    tr.innerHTML = '<td><b>' + esc(c.name) + '</b><br><small style="color:var(--ink-3)">' + esc(c.id) + (c.gstin ? ' · ' + esc(c.gstin) : '') + '</small></td>' +
+      '<td>' + esc(c.bill && c.bill.city || '—') + '</td>' +
+      '<td>' + esc(c.owner || '—') + '</td>' +
+      '<td class="num">' + c.contacts + '</td><td class="num">' + c.orders + '</td><td class="num">' + inr(c.value) + '</td>' +
+      '<td>' + (c.active ? '<span class="badge in">active</span>' : '<span class="badge out">inactive</span>') + '</td>';
+    tr.onclick = function () { openAccount(c); };
+    tb.appendChild(tr);
+  });
+  $('coNew').onclick = function () { editCompany(null); };
+  $('coFind').oninput = function () { A.accountQuery = this.value; renderCompanies(); $('coFind').focus(); $('coFind').setSelectionRange(this.value.length, this.value.length); };
+  if ($('coImport')) $('coImport').onclick = function () {
+    $('coImport').disabled = true; $('coImportOut').textContent = 'Importing…';
+    api('adminCompanyImport').then(function (res) { toast('Imported ' + res.created + ' account' + (res.created === 1 ? '' : 's')); loadCompanies(); })
+      .catch(function (e) { $('coImport').disabled = false; $('coImportOut').textContent = e.message; });
+  };
+}
+
+/* The account page: everything about one customer in one place. */
+function openAccount(c) {
+  A.accountOpen = c.id;
+  var me = A.user || {};
+  var people = contactsOf(c.id);
+  var related = (A.requests || []).filter(function (r) { return r.company_id === c.id; });
+  $('p-accounts').innerHTML =
+    '<div style="margin-bottom:10px"><a href="#" id="acBack" style="font-weight:700">← Accounts</a></div>' +
+    '<div class="panel-head" style="align-items:flex-start"><div><h2 style="margin:0">' + esc(c.name) + ' ' + (c.active ? '' : '<span class="badge out">inactive</span>') + '</h2>' +
+      '<div class="note" style="margin:4px 0 0">' + esc(c.id) + (c.gstin ? ' · GSTIN ' + esc(c.gstin) : '') + (c.owner ? ' · owner ' + esc(c.owner) : ' · no owner') + '</div></div>' +
+      '<span class="sp"></span>' +
+      '<button class="btn small" id="acEnq">+ Enquiry</button> <button class="btn primary small" id="acEdit" style="margin-left:8px">Edit account</button></div>' +
+    '<div class="stat-row">' + stat(people.length, 'contacts') + stat(related.filter(function (r) { return !isOrder(r); }).length, 'enquiries') +
+      stat(related.filter(isOrder).length, 'orders') + stat(inr(c.value), 'lifetime value') + '</div>' +
+    '<div class="two-col" style="margin-bottom:18px">' +
+      '<div class="card-block"><h3>Billing address</h3>' + (addrLines(c.bill) || esc(c.billing_address || '—')) + '</div>' +
+      '<div class="card-block"><h3>Shipping address</h3>' + (c.ship_same ? '<span class="note" style="margin:0">Same as billing</span>' : (addrLines(c.ship) || esc(c.ship_address || '—'))) +
+        '<div class="note" style="margin:10px 0 0">' + (c.phone ? esc(c.phone) + ' · ' : '') + (c.email ? '<a href="mailto:' + esc(c.email) + '">' + esc(c.email) + '</a>' : '') +
+        (c.state_code ? '<br>Place of supply ' + esc(stateName(c.state_code) || c.state_code) + ' (' + esc(c.state_code) + ')' : '') + '</div></div>' +
+    '</div>' +
+    (c.notes ? '<div class="note2" style="margin-bottom:18px"><b>Account note:</b> ' + esc(c.notes) + '</div>' : '') +
+
+    '<div class="section-head"><h2 style="font-size:16px">Contacts</h2></div>' +
+    '<div id="acContacts"></div><button class="btn small" id="acContactNew" style="margin:8px 0 18px">+ Contact</button>' +
+
+    '<div class="section-head"><h2 style="font-size:16px">Enquiries and orders</h2></div>' +
+    requestTable('acRows', 'enquiry') +
+
+    '<div class="two-col" style="margin-top:18px">' +
+      '<div><div class="section-head"><h2 style="font-size:16px">Notes</h2><div class="note-sub">Dated, in the author\'s name. What was discussed, agreed, promised.</div></div>' +
+        '<div class="field"><textarea id="acNoteText" placeholder="add a note" style="min-height:64px"></textarea></div>' +
+        '<button class="btn small" id="acNoteAdd" style="margin-bottom:10px">Add note</button>' +
+        '<div id="acNotes"><div class="spin"></div></div></div>' +
+      '<div><div class="section-head"><h2 style="font-size:16px">Attachments</h2><div class="note-sub">Filed under Merchforce / Accounts / ' + esc(c.id) + ' in Drive.</div></div>' +
+        '<label class="btn small" for="acFile" style="cursor:pointer;margin-bottom:10px">Upload a file</label><input id="acFile" type="file" class="sr-only" multiple>' +
+        '<span class="note" id="acFileOut" style="margin-left:8px"></span>' +
+        '<div id="acFiles"><div class="spin"></div></div></div>' +
+    '</div>';
+
+  $('acBack').onclick = function (e) { e.preventDefault(); renderCompanies(); };
+  $('acEdit').onclick = function () { editCompany(c); };
+  $('acEnq').onclick = function () { newRequest(c); };
+  requestRows('acRows', related, 'enquiry');
+
+  function paintContacts() {
+    var rows = contactsOf(c.id);
+    $('acContacts').innerHTML = rows.length
+      ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th>Consent</th><th></th></tr></thead><tbody>' +
+        rows.map(function (ct) {
+          return '<tr class="click" data-ct="' + esc(ct.id) + '"><td><b>' + esc(ct.name || '—') + '</b></td><td>' + esc(ct.email || '—') + '</td><td>' + esc(ct.phone || '—') + '</td><td>' + esc(ct.role || '—') + '</td>' +
+            '<td>' + (ct.unsubscribed ? '<span style="color:var(--bad)">unsubscribed</span>' : ct.consent ? '<span style="color:var(--ok)">yes</span>' : 'no') + '</td>' +
+            '<td class="num"><button class="btn small" data-del="' + esc(ct.id) + '">Remove</button></td></tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<div class="empty" style="padding:14px 0">Nobody recorded at this account yet.</div>';
+    $('acContacts').querySelectorAll('tr[data-ct]').forEach(function (tr) {
+      tr.onclick = function (ev) { if (ev.target.dataset.del) return; editContact(c.id, A.contacts.filter(function (x) { return x.id === tr.dataset.ct; })[0], paintContacts); };
+    });
+    $('acContacts').querySelectorAll('button[data-del]').forEach(function (b) {
+      b.onclick = function (ev) {
+        ev.stopPropagation();
+        if (!confirm('Remove this contact?')) return;
+        b.disabled = true;
+        api('adminContactDelete', { id: b.dataset.del }).then(function () {
+          A.contacts = A.contacts.filter(function (x) { return x.id !== b.dataset.del; }); paintContacts(); toast('Contact removed');
+        }).catch(function (e) { b.disabled = false; toast(e.message); });
+      };
+    });
+  }
+  paintContacts();
+  $('acContactNew').onclick = function () { editContact(c.id, null, paintContacts); };
+
+  function paintNotes(notes) {
+    $('acNotes').innerHTML = notes.length ? notes.map(function (n) {
+      return '<div class="card-block" style="padding:10px 14px;margin-bottom:8px"><div style="display:flex;gap:8px;align-items:baseline"><b style="font-size:13px">' + esc(n.author) + '</b>' +
+        '<small style="color:var(--ink-3)">' + fmtDate(n.ts) + '</small><span class="sp"></span><button class="btn ghost small" data-ndel="' + esc(n.id) + '">×</button></div>' +
+        '<div style="white-space:pre-wrap;font-size:13.5px;margin-top:4px">' + esc(n.text) + '</div></div>';
+    }).join('') : '<div class="empty" style="padding:14px 0">No notes yet.</div>';
+    $('acNotes').querySelectorAll('button[data-ndel]').forEach(function (b) {
+      b.onclick = function () {
+        if (!confirm('Delete this note?')) return;
+        api('adminAccountNoteDelete', { id: b.dataset.ndel }).then(function () { toast('Note deleted'); loadExtras(); }).catch(function (e) { toast(e.message); });
+      };
+    });
+  }
+  function paintFiles(files) {
+    $('acFiles').innerHTML = files.length ? '<div class="tbl-wrap"><table class="tbl"><tbody>' + files.map(function (f) {
+      return '<tr><td><a href="' + esc(f.url) + '" target="_blank"><b>' + esc(f.name) + '</b></a><br><small style="color:var(--ink-3)">' + esc(f.uploaded_by) + ' · ' + fmtDate(f.ts) + (f.size ? ' · ' + Math.max(1, Math.round(f.size / 1024)) + ' KB' : '') + '</small></td>' +
+        '<td class="num"><button class="btn small" data-fdel="' + esc(f.id) + '">×</button></td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="empty" style="padding:14px 0">Nothing filed yet.</div>';
+    $('acFiles').querySelectorAll('button[data-fdel]').forEach(function (b) {
+      b.onclick = function () {
+        if (!confirm('Delete this file from Drive?')) return;
+        api('adminAccountFileDelete', { id: b.dataset.fdel }).then(function () { toast('File deleted'); loadExtras(); }).catch(function (e) { toast(e.message); });
+      };
+    });
+  }
+  function loadExtras() {
+    return api('adminAccountNotes', { company_id: c.id }).then(function (res) { paintNotes(res.notes); paintFiles(res.files); })
+      .catch(function (e) { $('acNotes').innerHTML = '<div class="empty" style="padding:14px 0">' + esc(e.message) + '</div>'; $('acFiles').innerHTML = ''; });
+  }
+  loadExtras();
+  $('acNoteAdd').onclick = function () {
+    var text = $('acNoteText').value.trim();
+    if (!text) return;
+    $('acNoteAdd').disabled = true;
+    api('adminAccountNoteSave', { company_id: c.id, text: text }).then(function () { $('acNoteText').value = ''; toast('Note added'); return loadExtras(); })
+      .catch(function (e) { toast(e.message); }).then(function () { $('acNoteAdd').disabled = false; });
+  };
+  $('acFile').onchange = function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    if (!files.length) return;
+    var done = 0;
+    $('acFileOut').textContent = 'Uploading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '…';
+    files.reduce(function (chain, f) {
+      return chain.then(function () {
+        return new Promise(function (resolve, reject) {
+          if (f.size > 10 * 1024 * 1024) { reject(new Error(f.name + ' is over 10MB')); return; }
+          var rd = new FileReader();
+          rd.onload = function () { api('adminAccountFileUpload', { company_id: c.id, filename: f.name, mime: f.type || 'application/octet-stream', data: rd.result }).then(function () { done++; resolve(); }, reject); };
+          rd.onerror = function () { reject(new Error('Could not read ' + f.name)); };
+          rd.readAsDataURL(f);
+        });
+      });
+    }, Promise.resolve()).then(function () { $('acFileOut').textContent = ''; toast(done + ' file' + (done === 1 ? '' : 's') + ' filed'); })
+      .catch(function (e) { $('acFileOut').textContent = e.message; }).then(function () { $('acFile').value = ''; loadExtras(); });
+  };
+}
+
+function addrFields(pfx, a) {
+  a = a || {};
+  return '<div class="field"><label>Address line 1</label><input id="' + pfx + 'L1" value="' + esc(a.line1 || '') + '"></div>' +
+    '<div class="field"><label>Address line 2</label><input id="' + pfx + 'L2" value="' + esc(a.line2 || '') + '"></div>' +
+    '<div class="f2">' +
+      '<div class="field"><label>City</label><input id="' + pfx + 'City" value="' + esc(a.city || '') + '"></div>' +
+      '<div class="field"><label>State</label><select id="' + pfx + 'State">' + stateOptions(stateCode(a.state), 'Choose a state') + '</select></div>' +
+      '<div class="field"><label>PIN code</label><input id="' + pfx + 'Pin" value="' + esc(a.pin || '') + '" maxlength="10"></div>' +
+      '<div class="field"><label>Country</label><input id="' + pfx + 'Country" value="' + esc(a.country || 'India') + '"></div>' +
+    '</div>';
+}
+function readAddr(pfx) {
+  return { line1: $(pfx + 'L1').value.trim(), line2: $(pfx + 'L2').value.trim(), city: $(pfx + 'City').value.trim(),
+           state: stateName($(pfx + 'State').value), pin: $(pfx + 'Pin').value.trim(), country: $(pfx + 'Country').value.trim() };
+}
+
+function editCompany(c) {
+  var isNew = !c;
+  c = c || { id: '', name: '', gstin: '', phone: '', email: '', billing_address: '', ship_address: '', state_code: '', owner: '', owner_email: '', notes: '', active: true, orders: 0, bill: {}, ship: {}, ship_same: true };
+  staffList().then(function (staff) {
+    openDrawer(
+      '<h2 style="margin:0 0 14px">' + (isNew ? 'New account' : esc(c.name)) + '</h2>' +
+      '<div class="field"><label>Account name *</label><input id="cName" value="' + esc(c.name) + '"></div>' +
+      '<div class="f2">' +
+        '<div class="field"><label>GSTIN</label><input id="cGstin" value="' + esc(c.gstin) + '" maxlength="15" placeholder="15 characters"></div>' +
+        '<div class="field"><label>Account owner</label><select id="cOwner">' + staffOptions(staff, c.owner_email, 'Nobody yet') + '</select></div>' +
+        '<div class="field"><label>Phone</label><input id="cPhone" value="' + esc(c.phone) + '"></div>' +
+        '<div class="field"><label>Email</label><input id="cEmail" value="' + esc(c.email) + '"></div>' +
+      '</div>' +
+      '<div class="section-head" style="margin-top:8px"><h2 style="font-size:15px">Billing address</h2></div>' + addrFields('cb', c.bill) +
+      '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin:6px 0 10px"><input id="cSame" type="checkbox"' + (c.ship_same !== false ? ' checked' : '') + '> Shipping address is the same as billing</label>' +
+      '<div id="cShipWrap"' + (c.ship_same !== false ? ' hidden' : '') + '><div class="section-head"><h2 style="font-size:15px">Shipping address</h2></div>' + addrFields('cs', c.ship) + '</div>' +
+      '<div class="f2">' +
+        '<div class="field"><label>Notes</label><input id="cNotes" value="' + esc(c.notes) + '"></div>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="cActive" type="checkbox"' + (c.active ? ' checked' : '') + '> Active</label>' +
+      '</div>' +
+      '<p class="note">Place of supply for GST is taken from the billing state, or from the GSTIN when there is no state.</p>' +
+      '<div class="form-err" id="mErr"></div>' +
+      '<div style="display:flex;gap:10px;margin-top:16px">' +
+        (isNew || c.orders ? '' : '<button class="btn danger" id="cDel">Delete</button>') +
+        '<button class="btn primary" id="cSave" style="flex:1;justify-content:center">Save account</button>' +
+      '</div>' +
+      (!isNew && c.orders ? '<p class="note" style="margin-top:8px">This account has ' + c.orders + ' enquir' + (c.orders === 1 ? 'y' : 'ies') + ' against it, so it cannot be deleted. Untick Active to retire it.</p>' : ''));
+
+    $('cSame').onchange = function () { $('cShipWrap').hidden = this.checked; };
+    if ($('cDel')) $('cDel').onclick = function () {
+      if (!confirm('Delete this account and its contacts?')) return;
+      api('adminCompanyDelete', { id: c.id }).then(function () { closeDrawer(); toast('Account deleted'); A.accountOpen = ''; loadCompanies(); })
+        .catch(function (e) { $('mErr').textContent = e.message; });
+    };
+    $('cSave').onclick = function () {
+      var gstin = $('cGstin').value.trim().toUpperCase();
+      if (gstin && gstin.length !== 15) { $('mErr').textContent = 'A GSTIN is 15 characters. Leave it blank if you do not have it yet.'; return; }
+      var same = $('cSame').checked;
+      var ownerEmail = $('cOwner').value;
+      var owner = staff.filter(function (u) { return u.email === ownerEmail; })[0];
+      $('cSave').disabled = true;
+      api('adminCompanySave', { company: {
+        id: c.id, name: $('cName').value.trim(), gstin: gstin,
+        phone: $('cPhone').value.trim(), email: $('cEmail').value.trim(),
+        owner_email: ownerEmail, owner: owner ? owner.name : '',
+        bill: readAddr('cb'), ship_same: same, ship: same ? undefined : readAddr('cs'),
+        notes: $('cNotes').value.trim(), active: $('cActive').checked
+      } }).then(function (res) { closeDrawer(); toast('Account saved'); A.accountOpen = res.id || c.id; loadCompanies(); })
+        .catch(function (e) { $('cSave').disabled = false; $('mErr').textContent = e.message; });
+    };
+  });
+}
+
+/* ================= UNIVERSAL SEARCH ================= */
+function searchReady() {
+  var need = [];
+  if (!A.products.length) need.push(api('adminCatalog').then(function (res) { A.products = res.products; A.brands = res.brands; }));
+  if (!A.requestsAt) need.push(loadRequests());
+  if (!A.companies.length && !A.loaded.accounts) need.push(api('adminCompanies').then(function (res) { A.companies = res.companies; A.contacts = res.contacts; }).catch(function () {}));
+  return Promise.all(need);
+}
+function searchAll(q) {
+  q = q.toLowerCase();
+  var hit = function (s) { return String(s || '').toLowerCase().indexOf(q) >= 0; };
+  var products = A.products.filter(function (p) { return hit(p.sku) || hit(p.name) || hit(brandName(p.brand_id)) || hit(p.category) || hit(p.hsn); }).slice(0, 8);
+  var requests = (A.requests || []).filter(function (r) {
+    return hit(r.id) || hit(r.company) || hit(r.contact) || hit(r.email) || hit(r.po_number) || hit(r.pi_number) || r.lines.some(function (l) { return hit(l.sku) || hit(l.name); });
+  }).slice(0, 8);
+  var companies = (A.companies || []).filter(function (c) { return hit(c.name) || hit(c.gstin) || hit(c.id) || hit(c.owner); }).slice(0, 6);
+  var contacts = (A.contacts || []).filter(function (c) { return hit(c.name) || hit(c.email) || hit(c.phone); }).slice(0, 6);
+  return { products: products, requests: requests, companies: companies, contacts: contacts };
+}
+function wireSearch() {
+  var input = $('gSearch'), panel = $('gSearchPick');
+  if (!input) return;
+  var timer = null;
+  function group(title, rows) { return rows ? '<div class="gs-group">' + title + '</div>' + rows : ''; }
+  function paint() {
+    var q = input.value.trim();
+    if (q.length < 2) { panel.hidden = true; return; }
+    searchReady().then(function () {
+      var r = searchAll(q);
+      var compById = {}; (A.companies || []).forEach(function (c) { compById[c.id] = c; });
+      var html =
+        group('Products', r.products.map(function (p) {
+          return '<div class="ppick-row" data-k="p" data-id="' + esc(p.sku) + '">' + thumb(p, 36) + '<div class="ppick-txt"><b>' + esc(p.name) + '</b><small>' + esc(p.sku) + ' · ' + esc(brandName(p.brand_id)) + ' · MOQ ' + p.moq + ' · ' + (p.atp > 0 ? qty(p.atp) + ' available' : 'out of stock') + (p.tiers && p.tiers[0] ? ' · from ' + inr(p.tiers[0].price) : '') + '</small></div></div>';
+        }).join('')) +
+        group('Enquiries and orders', r.requests.map(function (x) {
+          return '<div class="ppick-row" data-k="r" data-id="' + esc(x.id) + '"><div class="ppick-txt"><b>' + esc(x.id) + ' · ' + esc(x.company) + '</b><small>' + esc(x.status) + ' · ' + esc(x.contact) + ' · ' + inr(x.pi_total || x.total_est) + (x.po_number ? ' · PO ' + esc(x.po_number) : '') + '</small></div></div>';
+        }).join('')) +
+        group('Accounts', r.companies.map(function (c) {
+          return '<div class="ppick-row" data-k="c" data-id="' + esc(c.id) + '"><div class="ppick-txt"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + (c.gstin ? ' · ' + esc(c.gstin) : '') + ' · ' + c.orders + ' enquir' + (c.orders === 1 ? 'y' : 'ies') + (c.owner ? ' · ' + esc(c.owner) : '') + '</small></div></div>';
+        }).join('')) +
+        group('Contacts', r.contacts.map(function (ct) {
+          var co = compById[ct.company_id];
+          return '<div class="ppick-row" data-k="ct" data-id="' + esc(ct.company_id) + '"><div class="ppick-txt"><b>' + esc(ct.name || ct.email) + '</b><small>' + esc(ct.email || '') + (ct.phone ? ' · ' + esc(ct.phone) : '') + (co ? ' · ' + esc(co.name) : '') + '</small></div></div>';
+        }).join(''));
+      panel.innerHTML = html || '<div class="ppick-none">Nothing matches "' + esc(q) + '"</div>';
+      panel.hidden = false;
+      panel.querySelectorAll('.ppick-row').forEach(function (row) {
+        row.onmousedown = function (e) {
+          e.preventDefault(); panel.hidden = true; input.value = '';
+          var id = row.dataset.id;
+          if (row.dataset.k === 'p') viewProduct(A.products.filter(function (p) { return p.sku === id; })[0]);
+          if (row.dataset.k === 'r') { var rq = A.requests.filter(function (x) { return x.id === id; })[0]; goTab(isOrder(rq) ? 'orders' : 'enquiries'); openOrder(rq); }
+          if (row.dataset.k === 'c' || row.dataset.k === 'ct') { goTab('accounts'); var co = (A.companies || []).filter(function (x) { return x.id === id; })[0]; if (co) openAccount(co); }
+        };
+      });
+    });
+  }
+  input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(paint, 120); });
+  input.addEventListener('focus', function () { if (input.value.trim().length >= 2) paint(); });
+  input.addEventListener('blur', function () { setTimeout(function () { panel.hidden = true; }, 150); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (!$('mOverlay').hidden) { closeDrawer(); return; }
+    input.value = ''; panel.hidden = true; input.blur(); e.stopPropagation();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !$('console').hidden) { e.preventDefault(); input.focus(); }
+  });
+}
+function goTab(name) {
+  var chip = document.querySelector('#tabs .chip[data-t="' + name + '"]');
+  if (chip && !chip.classList.contains('on')) chip.click();
+}
+
+/* Read-only product card for answering an enquiry quickly. */
+function viewProduct(p) {
+  if (!p) return;
+  var specs = Array.isArray(p.specs) ? p.specs : String(p.specs || '').split('|').map(function (s) { return s.trim(); }).filter(String);
+  openDrawer(
+    '<div style="display:flex;gap:16px;align-items:flex-start">' +
+      '<div style="width:160px;height:160px;border-radius:12px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;flex:none">' + (p.images[0] ? '<img src="' + esc(p.images[0]) + '" style="max-width:150px;max-height:150px;object-fit:contain">' : '') + '</div>' +
+      '<div style="min-width:0"><div class="note" style="margin:0;font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:11px">' + esc(brandName(p.brand_id)) + (p.category ? ' · ' + esc(p.category) : '') + '</div>' +
+        '<h2 style="margin:4px 0 2px">' + esc(p.name) + '</h2>' +
+        '<div class="note" style="margin:0 0 10px">' + esc(p.sku) + (p.hsn ? ' · HSN ' + esc(p.hsn) : '') + (p.gst_rate !== undefined ? ' · GST ' + esc(String(p.gst_rate)) + '%' : '') + '</div>' +
+        '<div style="font-weight:700">MOQ ' + p.moq + (p.lead_time ? ' · Lead time ' + esc(p.lead_time) : '') + '</div>' +
+        '<div style="font-weight:700;margin-top:6px;color:' + (p.atp > 0 ? 'var(--ok)' : 'var(--bad)') + '">' + (p.atp > 0 ? qty(p.atp) + ' available to promise' : 'Out of stock') + '<span class="note" style="margin:0 0 0 8px;font-weight:400">on hand ' + qty(p.on_hand) + ' · reserved ' + qty(p.reserved) + '</span></div>' +
+      '</div></div>' +
+    (specs.length ? '<ul style="margin:14px 0 0 18px;padding:0">' + specs.map(function (s) { return '<li style="margin-bottom:3px">' + esc(s) + '</li>'; }).join('') + '</ul>' : '') +
+    (p.tiers && p.tiers.length ? '<div class="tbl-wrap" style="margin-top:14px"><table class="tbl"><thead><tr>' + p.tiers.map(function (t) { return '<th class="num">' + qty(t.min) + '+ units</th>'; }).join('') + '</tr></thead>' +
+      '<tbody><tr>' + p.tiers.map(function (t) { return '<td class="num"><b>' + inr(t.price) + '</b></td>'; }).join('') + '</tr></tbody></table></div><p class="note">Per unit, ex-GST' + (p.mrp ? ' · MRP ' + inr(p.mrp) : '') + '</p>' : '') +
+    (p.description ? '<p style="font-size:13.5px">' + esc(p.description) + '</p>' : '') +
+    '<div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" id="vpEnq" style="flex:1;justify-content:center">Raise an enquiry with this</button><button class="btn" id="vpEdit">Edit in catalogue</button></div>');
+  $('vpEnq').onclick = function () { newRequest(null, p); };
+  $('vpEdit').onclick = function () { goTab('catalog'); editProduct(p); };
+}
+
 
 function orderTimeline(r) {
   var done = STAGES.indexOf(r.status);
@@ -280,7 +818,7 @@ function openOrder(r) {
   var link = A.siteUrl ? A.siteUrl + '/order.html?t=' + r.token : '';
   var next = '';
   if (r.status === 'New') {
-    next = '<button class="btn primary small" id="oAccept">Accept request</button> ' +
+    next = '<button class="btn primary small" id="oAccept">Accept enquiry</button> ' +
            '<button class="btn danger small" id="oReject">Reject</button>';
   } else if (['Accepted', 'PI Sent'].indexOf(r.status) >= 0) {
     next = '<button class="btn primary small" id="oQuote">' + (r.pi_number ? 'Revise quotation' : 'Create quotation (PI)') + '</button> ' +
@@ -324,6 +862,8 @@ function openOrder(r) {
           '<td>' + statusPill(s.status) + '</td>' +
           '<td><button class="btn ghost small" data-shed="' + s.no + '">Edit</button></td></tr>';
       }).join('') + '</tbody></table></div>' : '') +
+    '<div class="f2"><div class="field"><label>Follow-up owner</label><select id="mOwner"><option value="' + esc(r.assigned_to || '') + '">' + esc(r.assigned_name || 'Unassigned') + '</option></select></div>' +
+      '<div class="field"><label>Raised by</label><input value="' + esc(r.raised_by || '—') + '" readonly></div></div>' +
     '<div class="field"><label>Internal notes</label><textarea id="mNotes">' + esc(r.admin_notes || '') + '</textarea></div>' +
     '<div class="field"><label>Status (override)</label><select id="mStatus">' +
       STATUSES.map(function (s) { return '<option' + (s === r.status ? ' selected' : '') + '>' + s + '</option>'; }).join('') +
@@ -336,6 +876,19 @@ function openOrder(r) {
     try { navigator.clipboard.writeText(link); } catch (e) {}
     toast('Client link copied');
   };
+  staffList().then(function (staff) {
+    if (!$('mOwner')) return;
+    $('mOwner').innerHTML = staffOptions(staff, r.assigned_to, 'Unassigned');
+    $('mOwner').onchange = function () {
+      var sel = $('mOwner');
+      sel.disabled = true;
+      api('adminRequestAssign', { id: r.id, assigned_to: sel.value }).then(function (res) {
+        r.assigned_to = res.assigned_to; r.assigned_name = res.assigned_name;
+        toast(res.assigned_name ? r.id + ' assigned to ' + res.assigned_name : r.id + ' unassigned');
+        paintRequestViews();
+      }).catch(function (e) { toast(e.message); }).then(function () { sel.disabled = false; });
+    };
+  });
   if ($('oAccept')) $('oAccept').onclick = function () { decide(r, true); };
   if ($('oReject')) $('oReject').onclick = function () { decide(r, false); };
   if ($('oQuote')) $('oQuote').onclick = function () { openQuoteBuilder(r); };
@@ -941,7 +1494,7 @@ function attachProductPicker(input, panel, products, onPick) {
       e.preventDefault();
       var p = idx >= 0 ? shown[idx] : (shown.length === 1 ? shown[0] : shown.filter(function (x) { return x.sku.toLowerCase() === input.value.trim().toLowerCase(); })[0]);
       if (p) pick(p);
-    } else if (e.key === 'Escape') { panel.hidden = true; e.stopPropagation(); }
+    } else if (e.key === 'Escape') { if (!panel.hidden) { panel.hidden = true; e.stopPropagation(); } }
   });
 }
 
@@ -960,40 +1513,42 @@ function tierPrice(p, qty) {
   return price;
 }
 
-function newRequest() {
-  var need = [];
+function newRequest(presetCompany, presetProduct) {
+  var need = [staffList()];
   if (!A.products.length) need.push(api('adminCatalog').then(function (res) { A.products = res.products; A.brands = res.brands; }));
-  if (!A.companies.length && !A.loaded.companies) need.push(api('adminCompanies').then(function (res) {
+  if (!A.companies.length && !A.loaded.accounts) need.push(api('adminCompanies').then(function (res) {
     A.companies = res.companies; A.contacts = res.contacts;
   }).catch(function () { /* tabs may not exist yet; free-text company still works */ }));
-  Promise.all(need).then(openNewRequest);
+  Promise.all(need).then(function (r) { openNewRequest(r[0] || [], presetCompany, presetProduct); });
 }
 
-function openNewRequest() {
+function openNewRequest(staff, presetCompany, presetProduct) {
   var lines = [];          // {sku, qty}
   var companyId = '';
+  var me = A.user || {};
 
   var catalogue = A.products.filter(function (p) { return p.visible; });
   var companies = A.companies.filter(function (c) { return c.active; });
 
   openDrawer(
-    '<h2 style="margin:0 0 4px">New request</h2>' +
-    '<p class="note" style="margin:0 0 14px">Raised on the customer\'s behalf. It enters the normal flow at <b>New</b>: accept it, build the quotation, and the PI goes out with the client link as usual.</p>' +
+    '<h2 style="margin:0 0 4px">New enquiry</h2>' +
+    '<p class="note" style="margin:0 0 14px">Raised on the customer\'s behalf. It enters the flow at <b>New</b>: accept it, build the quotation, the PI goes out with the client link, and the purchase order turns it into an order.</p>' +
 
-    '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(A.user ? A.user.name : actorName()) + '"' + (A.user ? ' readonly' : '') + ' placeholder="your name — goes on the order and the audit log"></div>' +
-
-    '<div class="section-head" style="margin-top:14px"><h2 style="font-size:15px">Customer</h2></div>' +
-    '<div class="field"><label>Company *</label>' +
-      '<input id="nCompany" list="nCompanyList" placeholder="pick a company, or type a new name" autocomplete="off">' +
-      '<datalist id="nCompanyList">' + companies.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join('') + '</datalist>' +
-      '<div class="note" id="nCompanyHint" style="margin-top:4px"></div></div>' +
     '<div class="f2">' +
-      '<div class="field"><label>Contact name *</label><input id="nContact" list="nContactList" autocomplete="off"><datalist id="nContactList"></datalist></div>' +
+      '<div class="field"><label>Raised by *</label><input id="nActor" value="' + esc(A.user ? A.user.name : actorName()) + '"' + (A.user ? ' readonly' : '') + ' placeholder="your name — goes on the enquiry and the audit log"></div>' +
+      '<div class="field"><label>Follow-up owner</label><select id="nOwner">' + staffOptions(staff, me.email || '', 'Unassigned') + '</select></div>' +
+    '</div>' +
+
+    '<div class="section-head" style="margin-top:6px"><h2 style="font-size:15px">Customer</h2></div>' +
+    pickerField('nCompany', 'Account *', 'pick an account, or type a new name') +
+    '<div class="note" id="nCompanyHint" style="margin:-8px 0 10px"></div>' +
+    '<div class="f2">' +
+      pickerField('nContact', 'Contact name *', 'pick a contact, or type a name') +
       '<div class="field"><label>Contact email *</label><input id="nEmail" type="email"></div>' +
       '<div class="field"><label>Phone</label><input id="nPhone"></div>' +
       '<div class="field"><label>GSTIN</label><input id="nGstin" maxlength="15"></div>' +
       '<div class="field"><label>Ship-to address</label><input id="nShip"></div>' +
-      '<div class="field"><label>Place of supply (state code)</label><input id="nPos" maxlength="2" placeholder="29"></div>' +
+      '<div class="field"><label>Place of supply</label><select id="nPos">' + stateOptions('', 'Choose a state') + '</select></div>' +
     '</div>' +
 
     '<div class="section-head" style="margin-top:14px"><h2 style="font-size:15px">Lines</h2>' +
@@ -1009,7 +1564,7 @@ function openNewRequest() {
     '<div class="field" style="margin-top:14px"><label>Notes</label><input id="nNotes" placeholder="anything the quotation builder should know"></div>' +
     '<div class="form-err" id="mErr"></div>' +
     '<div style="display:flex;gap:10px;margin-top:14px">' +
-      '<button class="btn primary" id="nSave" style="flex:1;justify-content:center">Raise request</button>' +
+      '<button class="btn primary" id="nSave" style="flex:1;justify-content:center">Raise enquiry</button>' +
     '</div>');
 
   function findCompany(name) {
@@ -1021,35 +1576,41 @@ function openNewRequest() {
     return catalogue.filter(function (p) { return String(p.sku).toUpperCase() === k; })[0] || null;
   }
 
-  // Choosing a known company fills what we already hold about them.
-  $('nCompany').oninput = function () {
-    var c = findCompany(this.value);
+  // Choosing a known account fills what we already hold about it.
+  function applyCompany(c) {
     companyId = c ? c.id : '';
     $('nCompanyHint').textContent = c
-      ? 'Existing company ' + c.id + (c.orders ? ' · ' + c.orders + ' previous order' + (c.orders === 1 ? '' : 's') : '')
-      : (this.value.trim() ? 'New company — it will be created from this order on the next import.' : '');
-    if (c) {
-      if (c.gstin && !$('nGstin').value) $('nGstin').value = c.gstin;
-      if (c.ship_address && !$('nShip').value) $('nShip').value = c.ship_address;
-      if (c.state_code && !$('nPos').value) $('nPos').value = c.state_code;
-      if (c.phone && !$('nPhone').value) $('nPhone').value = c.phone;
-      var people = contactsOf(c.id);
-      $('nContactList').innerHTML = people.map(function (ct) { return '<option value="' + esc(ct.name || ct.email) + '">'; }).join('');
-      if (people.length === 1) {
-        $('nContact').value = people[0].name || '';
-        $('nEmail').value = people[0].email || '';
-        if (people[0].phone && !$('nPhone').value) $('nPhone').value = people[0].phone;
-      }
-    } else {
-      $('nContactList').innerHTML = '';
-    }
-  };
-  $('nContact').oninput = function () {
-    if (!companyId) return;
-    var k = this.value.trim().toLowerCase();
-    var ct = contactsOf(companyId).filter(function (x) { return String(x.name).trim().toLowerCase() === k; })[0];
-    if (ct) { $('nEmail').value = ct.email || $('nEmail').value; if (ct.phone) $('nPhone').value = ct.phone; }
-  };
+      ? 'Existing account ' + c.id + (c.orders ? ' · ' + c.orders + ' previous enquir' + (c.orders === 1 ? 'y' : 'ies') : '') + (c.owner ? ' · owner ' + c.owner : '')
+      : ($('nCompany').value.trim() ? 'New account — it will be created from this enquiry on the next import.' : '');
+    if (!c) return;
+    if (c.gstin && !$('nGstin').value) $('nGstin').value = c.gstin;
+    if (!$('nShip').value) $('nShip').value = c.ship_address || '';
+    if (c.state_code && !$('nPos').value) $('nPos').value = c.state_code;
+    if (c.phone && !$('nPhone').value) $('nPhone').value = c.phone;
+    if (c.owner_email && staff.some(function (u) { return u.email === c.owner_email; }) && !me.email) $('nOwner').value = c.owner_email;
+    var people = contactsOf(c.id);
+    if (people.length === 1) applyContact(people[0]);
+  }
+  function applyContact(ct) {
+    $('nContact').value = ct.name || ct.email || '';
+    if (ct.email) $('nEmail').value = ct.email;
+    if (ct.phone && !$('nPhone').value) $('nPhone').value = ct.phone;
+  }
+  attachPicker($('nCompany'), $('nCompanyPick'), companies, {
+    text: function (c) { return c.name; },
+    sub: function (c) { return [c.id, c.gstin, c.bill && c.bill.city, c.owner].filter(String).join(' · '); },
+    free: true, empty: 'No account with that name',
+    onPick: applyCompany,
+    onType: function (v) { applyCompany(findCompany(v)); }
+  });
+  attachPicker($('nContact'), $('nContactPick'), function () { return companyId ? contactsOf(companyId) : []; }, {
+    text: function (ct) { return ct.name || ct.email; },
+    sub: function (ct) { return [ct.email, ct.phone, ct.role].filter(String).join(' · '); },
+    free: true, empty: companyId ? 'No contact on this account with that name' : 'Pick an account first',
+    onPick: applyContact
+  });
+  if (presetCompany) { $('nCompany').value = presetCompany.name; applyCompany(presetCompany); }
+  if (presetProduct) lines.push({ sku: presetProduct.sku, qty: presetProduct.moq || 1 });
 
   function paintLines() {
     if (!lines.length) {
@@ -1127,12 +1688,13 @@ function openNewRequest() {
       actor: actor, company_id: c ? c.id : '',
       company: company, contact: contact, email: email,
       phone: $('nPhone').value.trim(), gstin: gstin, notes: $('nNotes').value.trim(),
-      ship_address: $('nShip').value.trim(), place_of_supply: $('nPos').value.trim(),
+      ship_address: $('nShip').value.trim(), place_of_supply: $('nPos').value,
+      assigned_to: $('nOwner').value,
       lines: lines
     }).then(function (res) {
       closeDrawer();
       toast('Raised ' + res.request_id);
-      A.loaded.requests = false;
+      if (A.accountOpen) loadCompanies();
       loadRequests();
     }).catch(function (e) { $('nSave').disabled = false; $('mErr').textContent = e.message; });
   };
@@ -1200,8 +1762,7 @@ function newDeck() {
     '<p class="note" style="margin:0 0 14px">Image, specs, MOQ, price tiers and stock as of now, plus an at-a-glance table at the end. Cover carries the company identity; colours and density come from Settings → Deck design.</p>' +
     '<div class="f2">' +
       '<div class="field"><label>Deck name *</label><input id="dName" placeholder="e.g. Drinkware selection — Sept"></div>' +
-      '<div class="field"><label>Prepared for</label><input id="dCompany" list="dCompanyList" placeholder="company, optional" autocomplete="off">' +
-        '<datalist id="dCompanyList">' + companies.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join('') + '</datalist></div>' +
+      pickerField('dCompany', 'Prepared for', 'account, optional') +
     '</div>' +
     '<div class="section-head" style="margin-top:10px"><h2 style="font-size:15px">Products <span id="dCount" class="pill" style="background:var(--accent-soft);color:var(--accent)">0</span></h2></div>' +
     '<div style="display:flex;gap:8px;margin-bottom:8px">' +
@@ -1215,6 +1776,7 @@ function newDeck() {
     '</div>' +
     '<p class="note" id="dOut" style="margin-top:8px"></p>');
 
+  attachPicker($('dCompany'), $('dCompanyPick'), companies, { text: function (c) { return c.name; }, sub: function (c) { return [c.id, c.bill && c.bill.city, c.owner].filter(String).join(' · '); }, free: true, empty: 'No account with that name' });
   function shown() {
     var q = $('dFilter').value.trim().toLowerCase();
     return catalogue.filter(function (p) {
@@ -1263,11 +1825,11 @@ function sendDeck(d) {
   openDrawer(
     '<h2 style="margin:0 0 4px">Send ' + esc(d.name) + '</h2>' +
     '<p class="note" style="margin:0 0 14px">Emails the PDF and PowerPoint links' + (d.company ? ' — prepared for ' + esc(d.company) : '') + '. Goes out through your notification email setup, so it leaves from the configured address.</p>' +
-    '<div class="field"><label>To *</label><input id="sTo" type="email" list="sToList" autocomplete="off">' +
-      '<datalist id="sToList">' + contacts.filter(function (c) { return c.email; }).map(function (c) { return '<option value="' + esc(c.email) + '">' + esc(c.name) + '</option>'; }).join('') + '</datalist></div>' +
+    pickerField('sTo', 'To *', 'contact at the account, or any address') +
     '<div class="field"><label>Message</label><textarea id="sMsg" rows="4" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit" placeholder="a line or two — the links and the standard footer are added"></textarea></div>' +
     '<div class="form-err" id="mErr"></div>' +
     '<button class="btn primary" id="sSend" style="width:100%;justify-content:center">Send</button>');
+  attachPicker($('sTo'), $('sToPick'), contacts.filter(function (c) { return c.email; }), { text: function (c) { return c.email; }, sub: function (c) { return [c.name, c.role].filter(String).join(' · '); }, value: function (c) { return c.email; }, free: true, empty: 'No contact with an email on this account; type an address' });
   $('sSend').onclick = function () {
     var to = $('sTo').value.trim();
     if (!to) { $('mErr').textContent = 'Who is it going to?'; return; }
@@ -1279,176 +1841,6 @@ function sendDeck(d) {
 }
 
 /* ================= COMPANIES ================= */
-
-function loadCompanies() {
-  A.loaded.companies = true;
-  $('p-companies').innerHTML = '<div class="spin"></div>';
-  api('adminCompanies').then(function (res) {
-    A.companies = res.companies;
-    A.contacts = res.contacts;
-    A.unlinked = { names: res.unlinked_names, orders: res.unlinked_orders };
-    renderCompanies();
-  }).catch(function (e) { $('p-companies').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
-}
-
-function contactsOf(companyId) {
-  return A.contacts.filter(function (c) { return c.company_id === companyId; });
-}
-
-function renderCompanies() {
-  var u = A.unlinked || { names: 0, orders: 0 };
-  $('p-companies').innerHTML =
-    '<div class="panel-head"><h2>Companies</h2>' +
-      '<span class="sp"></span>' +
-      '<button class="btn primary small" id="coNew">+ Company</button></div>' +
-    '<p class="note" style="margin-top:-6px">Customers and the people at them. Orders attach to a company, which is what makes customer analytics and, later, campaign targeting work.</p>' +
-
-    (u.names
-      ? '<div class="note2 warn"><strong>' + u.orders + ' order' + (u.orders === 1 ? '' : 's') +
-        ' across ' + u.names + ' company name' + (u.names === 1 ? '' : 's') + ' are not linked to a company record.</strong> ' +
-        'Import groups them by name, creates one company each, links the orders and lifts the contact from the most recent order. ' +
-        'It is safe to run more than once. ' +
-        '<button class="btn small" id="coImport" style="margin-left:8px">Import from orders</button>' +
-        '<span id="coImportOut" class="note" style="margin-left:10px"></span></div>'
-      : '') +
-
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
-      '<th>Company</th><th>GSTIN</th><th class="num">Contacts</th><th class="num">Orders</th>' +
-      '<th class="num">Value</th><th>Active</th>' +
-    '</tr></thead><tbody id="coRows"></tbody></table></div>';
-
-  var tb = $('coRows');
-  if (!A.companies.length) {
-    tb.innerHTML = '<tr><td colspan="6"><div class="empty" style="padding:26px 0">No companies yet.</div></td></tr>';
-  }
-  A.companies.forEach(function (c) {
-    var tr = document.createElement('tr');
-    tr.className = 'click';
-    tr.innerHTML =
-      '<td><b>' + esc(c.name) + '</b>' + (c.owner ? '<br><small style="color:var(--ink-3)">' + esc(c.owner) + '</small>' : '') + '</td>' +
-      '<td>' + esc(c.gstin || '—') + '</td>' +
-      '<td class="num">' + c.contacts + '</td>' +
-      '<td class="num">' + c.orders + '</td>' +
-      '<td class="num">' + inr(c.value) + '</td>' +
-      '<td>' + (c.active ? '✓' : '—') + '</td>';
-    tr.onclick = function () { editCompany(c); };
-    tb.appendChild(tr);
-  });
-
-  $('coNew').onclick = function () { editCompany(null); };
-  if ($('coImport')) {
-    $('coImport').onclick = function () {
-      $('coImport').disabled = true;
-      $('coImportOut').textContent = 'Importing…';
-      api('adminCompanyImport', { actor: 'admin' }).then(function (res) {
-        toast(res.companies_created + ' companies, ' + res.contacts_created + ' contacts, ' + res.orders_linked + ' orders linked');
-        loadCompanies();
-      }).catch(function (e) {
-        $('coImport').disabled = false;
-        $('coImportOut').textContent = e.message;
-      });
-    };
-  }
-}
-
-function editCompany(c) {
-  var isNew = !c;
-  c = c || { id: '', name: '', gstin: '', phone: '', email: '', billing_address: '',
-             ship_address: '', state_code: '', owner: '', notes: '', active: true, orders: 0 };
-  var list = isNew ? [] : contactsOf(c.id);
-
-  openDrawer(
-    '<h2 style="margin:0 0 14px">' + (isNew ? 'New company' : esc(c.name)) + '</h2>' +
-    '<div class="field"><label>Company name *</label><input id="cName" value="' + esc(c.name) + '"></div>' +
-    '<div class="f2">' +
-      '<div class="field"><label>GSTIN</label><input id="cGstin" value="' + esc(c.gstin) + '" maxlength="15" placeholder="15 characters"></div>' +
-      '<div class="field"><label>State code (place of supply)</label><input id="cState" value="' + esc(c.state_code) + '" maxlength="2" placeholder="29"></div>' +
-      '<div class="field"><label>Phone</label><input id="cPhone" value="' + esc(c.phone) + '"></div>' +
-      '<div class="field"><label>Email</label><input id="cEmail" value="' + esc(c.email) + '"></div>' +
-    '</div>' +
-    '<div class="field"><label>Billing address</label><input id="cBill" value="' + esc(c.billing_address) + '"></div>' +
-    '<div class="field"><label>Ship-to address</label><input id="cShip" value="' + esc(c.ship_address) + '"></div>' +
-    '<div class="f2">' +
-      '<div class="field"><label>Account owner</label><input id="cOwner" value="' + esc(c.owner) + '" placeholder="who runs this account"></div>' +
-      '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="cActive" type="checkbox"' + (c.active ? ' checked' : '') + '> Active</label>' +
-    '</div>' +
-    '<div class="field"><label>Notes</label><input id="cNotes" value="' + esc(c.notes) + '"></div>' +
-
-    (isNew ? '<p class="note">Save the company first, then add the people at it.</p>'
-           : '<div class="section-head" style="margin-top:22px"><h2 style="font-size:16px">Contacts</h2>' +
-             '<div class="note-sub">Consent is what campaigns check before sending. An order is a business relationship, not marketing consent.</div></div>' +
-             '<div id="ctList"></div>' +
-             '<button class="btn small" id="ctNew" style="margin-top:8px">+ Contact</button>') +
-
-    '<div class="form-err" id="mErr"></div>' +
-    '<div style="display:flex;gap:10px;margin-top:16px">' +
-      (isNew || c.orders ? '' : '<button class="btn danger" id="cDel">Delete</button>') +
-      '<button class="btn primary" id="cSave" style="flex:1;justify-content:center">Save company</button>' +
-    '</div>' +
-    (!isNew && c.orders ? '<p class="note" style="margin-top:8px">This company has ' + c.orders + ' order' + (c.orders === 1 ? '' : 's') + ' against it, so it cannot be deleted. Untick Active to retire it.</p>' : ''));
-
-  function paintContacts() {
-    if (isNew) return;
-    var rows = contactsOf(c.id);
-    $('ctList').innerHTML = rows.length
-      ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Consent</th><th></th></tr></thead><tbody>' +
-        rows.map(function (ct) {
-          return '<tr class="click" data-ct="' + esc(ct.id) + '">' +
-            '<td><b>' + esc(ct.name || '—') + '</b></td>' +
-            '<td>' + esc(ct.email || '—') + '</td>' +
-            '<td>' + esc(ct.role || '—') + '</td>' +
-            '<td>' + (ct.unsubscribed ? '<span style="color:var(--bad)">unsubscribed</span>'
-                     : ct.consent ? '<span style="color:var(--good,green)">yes</span>' : 'no') + '</td>' +
-            '<td class="num"><button class="btn small" data-del="' + esc(ct.id) + '">Remove</button></td>' +
-          '</tr>';
-        }).join('') + '</tbody></table></div>'
-      : '<div class="empty" style="padding:14px 0">Nobody recorded at this company yet.</div>';
-
-    $('ctList').querySelectorAll('tr[data-ct]').forEach(function (tr) {
-      tr.onclick = function (ev) {
-        if (ev.target.dataset.del) return;
-        editContact(c.id, A.contacts.filter(function (x) { return x.id === tr.dataset.ct; })[0], paintContacts);
-      };
-    });
-    $('ctList').querySelectorAll('button[data-del]').forEach(function (b) {
-      b.onclick = function (ev) {
-        ev.stopPropagation();
-        b.disabled = true;
-        api('adminContactDelete', { id: b.dataset.del }).then(function () {
-          A.contacts = A.contacts.filter(function (x) { return x.id !== b.dataset.del; });
-          paintContacts();
-          toast('Contact removed');
-        }).catch(function (e) { b.disabled = false; $('mErr').textContent = e.message; });
-      };
-    });
-  }
-  paintContacts();
-
-  if (!isNew) {
-    $('ctNew').onclick = function () { editContact(c.id, null, paintContacts); };
-    if ($('cDel')) {
-      $('cDel').onclick = function () {
-        api('adminCompanyDelete', { id: c.id })
-          .then(function () { closeDrawer(); toast('Company deleted'); loadCompanies(); })
-          .catch(function (e) { $('mErr').textContent = e.message; });
-      };
-    }
-  }
-
-  $('cSave').onclick = function () {
-    var gstin = $('cGstin').value.trim().toUpperCase();
-    if (gstin && gstin.length !== 15) { $('mErr').textContent = 'A GSTIN is 15 characters. Leave it blank if you do not have it yet.'; return; }
-    $('cSave').disabled = true;
-    api('adminCompanySave', { actor: 'admin', company: {
-      id: c.id, name: $('cName').value.trim(), gstin: gstin,
-      phone: $('cPhone').value.trim(), email: $('cEmail').value.trim(),
-      billing_address: $('cBill').value.trim(), ship_address: $('cShip').value.trim(),
-      state_code: $('cState').value.trim(), owner: $('cOwner').value.trim(),
-      notes: $('cNotes').value.trim(), active: $('cActive').checked
-    } }).then(function () { closeDrawer(); toast('Company saved'); loadCompanies(); })
-      .catch(function (e) { $('cSave').disabled = false; $('mErr').textContent = e.message; });
-  };
-}
 
 function editContact(companyId, ct, done) {
   var isNew = !ct;
@@ -1671,7 +2063,7 @@ function renderQueue() {
   tb.querySelectorAll('button[data-open]').forEach(function (b) {
     b.onclick = function () {
       var r = rows.filter(function (x) { return x.id === b.dataset.open; })[0];
-      document.querySelector('#tabs .chip[data-t="requests"]').click();
+      goTab('orders');
       openOrder(r.order);
     };
   });
@@ -1877,16 +2269,16 @@ function loadUsers() {
 function renderUsers() {
   var me = A.user || {};
   $('p-users').innerHTML =
-    '<div class="panel-head"><h2>Staff accounts</h2>' +
-      '<span class="sp"></span><button class="btn primary small" id="uNew">+ Account</button></div>' +
+    '<div class="panel-head"><h2>Users</h2>' +
+      '<span class="sp"></span><button class="btn primary small" id="uNew">+ User</button></div>' +
     '<p class="note" style="margin-top:-6px">Everyone who uses this console signs in with their own account, so orders, quotations and stock changes are recorded against a person. ' +
-      '<b>Admins</b> can also manage accounts and settings. Sessions lapse after ' + esc(String(A.sessionMinutes)) + ' minutes of inactivity (Settings → Company).</p>' +
+      '<b>Admins</b> can also manage users and settings. Sessions lapse after ' + esc(String(A.sessionMinutes)) + ' minutes of inactivity (Settings → Company).</p>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Last sign-in</th>' +
     '</tr></thead><tbody id="uRows"></tbody></table></div>';
   $('uNew').onclick = function () { editUser(null); };
   var tb = $('uRows');
-  if (!A.users.length) tb.innerHTML = '<tr><td colspan="5" class="empty">No accounts yet. Create the first one, then sign in with it.</td></tr>';
+  if (!A.users.length) tb.innerHTML = '<tr><td colspan="5" class="empty">No users yet. Create the first one, then sign in with it.</td></tr>';
   A.users.forEach(function (u) {
     var tr = document.createElement('tr');
     tr.className = 'click';
@@ -1902,7 +2294,7 @@ function editUser(u) {
   var isNew = !u;
   u = u || { email: '', name: '', role: 'staff', active: true };
   openDrawer(
-    '<h2 style="margin:0 0 14px">' + (isNew ? 'New staff account' : esc(u.name || u.email)) + '</h2>' +
+    '<h2 style="margin:0 0 14px">' + (isNew ? 'New user' : esc(u.name || u.email)) + '</h2>' +
     '<div class="f2">' +
       '<div class="field"><label>Name *</label><input id="uName" value="' + esc(u.name) + '"></div>' +
       '<div class="field"><label>Email *</label><input id="uEmail" type="email" value="' + esc(u.email) + '"' + (isNew ? '' : ' readonly') + '></div>' +
@@ -1910,19 +2302,19 @@ function editUser(u) {
     '<div class="f2">' +
       '<div class="field"><label>Role</label><select id="uRole">' +
         '<option value="staff"' + (u.role !== 'admin' ? ' selected' : '') + '>Staff — orders, catalogue, stock</option>' +
-        '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>Admin — also accounts and settings</option>' +
+        '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>Admin — also users and settings</option>' +
       '</select></div>' +
       '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="uActive" type="checkbox"' + (u.active ? ' checked' : '') + '> Active</label>' +
     '</div>' +
     '<div class="field"><label>' + (isNew ? 'Password * (10+ characters)' : 'New password (leave blank to keep the current one)') + '</label><input id="uPass" type="text" autocomplete="new-password"></div>' +
     '<div class="form-err" id="mErr"></div>' +
-    '<button class="btn primary" id="uSave" style="width:100%;justify-content:center">Save account</button>');
+    '<button class="btn primary" id="uSave" style="width:100%;justify-content:center">Save user</button>');
   $('uSave').onclick = function () {
     $('uSave').disabled = true;
     api('adminUserSave', { user: {
       email: $('uEmail').value.trim(), name: $('uName').value.trim(), role: $('uRole').value,
       password: $('uPass').value, active: $('uActive').checked
-    } }).then(function () { closeDrawer(); toast('Account saved'); loadUsers(); })
+    } }).then(function () { closeDrawer(); toast('User saved'); loadUsers(); })
       .catch(function (e) { $('uSave').disabled = false; $('mErr').textContent = e.message; });
   };
 }
@@ -2033,11 +2425,11 @@ function renderAnalytics() {
         return '<button class="chip' + (A.days === x[0] ? ' on' : '') + '" data-d="' + x[0] + '">' + x[1] + '</button>';
       }).join('') + '</div></div>' +
 
-    section('Orders', 'Every request raised in this window, however it was raised.') +
+    section('Enquiries', 'Every enquiry raised in this window, however it was raised.') +
     '<div class="stat-row">' +
       stat(qty(r.count), 'Requests') +
       stat(inr(r.value), 'Request value') +
-      stat(inr(r.average), 'Average request') +
+      stat(inr(r.average), 'Average enquiry') +
       stat(d.pi_win_rate === null ? '—' : d.pi_win_rate + '%', 'PI win rate') +
       stat(d.median_hours_to_pi === null ? '—' : d.median_hours_to_pi + ' h', 'Median time to PI') +
       stat(d.median_days_to_deliver === null ? '—' : d.median_days_to_deliver + ' d', 'Median days to deliver') +
@@ -2165,9 +2557,12 @@ function renderSettings() {
         '</select></div>' +
       '</div>' +
       '<div class="card-block"><h3>Operations</h3>' +
-        '<div class="field"><label>New-request notification email</label><input id="sNotify" value="' + esc(s.notify_email) + '" placeholder="you@company.com"></div>' +
+        '<div class="field"><label>New-enquiry notification email</label><input id="sNotify" value="' + esc(s.notify_email) + '" placeholder="you@company.com"></div>' +
         '<div class="field"><label>Low-stock badge threshold (ATP ≤)</label><input id="sLow" type="number" value="' + esc(s.low_stock_threshold) + '"></div>' +
         '<div class="field"><label>Sender name on notifications</label><input id="sFromName" value="' + esc(s.mail_from_name) + '" placeholder="' + esc(s.site_name) + '"></div>' +
+        '<div class="field"><label>Stay signed in for</label><select id="sDays">' + [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, 'a year']].map(function (x) {
+          return '<option value="' + x[0] + '"' + (String(s.session_days || '30') === String(x[0]) ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
+          '<div class="note" style="margin-top:4px">A sign-in survives reloads and reopens for this long. The console still locks after the inactivity time in the Company card.</div></div>' +
       '</div>' +
     '</div>' +
     '<div class="form-err" id="sErr"></div>' +
@@ -2180,7 +2575,7 @@ function renderSettings() {
       site_name: $('sName').value.trim(), tagline: $('sTag').value.trim(),
       show_stock_numbers: $('sStock').value,
       notify_email: $('sNotify').value.trim(), low_stock_threshold: $('sLow').value,
-      mail_from_name: $('sFromName').value.trim()
+      mail_from_name: $('sFromName').value.trim(), session_days: $('sDays').value
     } }).then(function (res) {
       A.settings = res.settings;
       $('sSave').disabled = false;

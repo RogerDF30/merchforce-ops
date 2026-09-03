@@ -36,6 +36,13 @@ function doPost(e) {
       adminRequests:      fnAdminRequests_,
       adminRequestUpdate: fnAdminRequestUpdate_,
       adminRequestCreate: fnRequestSubmit_,
+      adminRequestAssign: fnAdminRequestAssign_,
+      adminStaffList:     fnAdminStaffList_,
+      adminAccountNotes:  fnAdminAccountNotes_,
+      adminAccountNoteSave:   fnAdminAccountNoteSave_,
+      adminAccountNoteDelete: fnAdminAccountNoteDelete_,
+      adminAccountFileUpload: fnAdminAccountFileUpload_,
+      adminAccountFileDelete: fnAdminAccountFileDelete_,
       adminCompanies:     fnAdminCompanies_,
       adminCompanySave:   fnAdminCompanySave_,
       adminCompanyDelete: fnAdminCompanyDelete_,
@@ -94,10 +101,12 @@ function doPost(e) {
       }
       if (sess) {
         p.actor = sess.name || sess.email;   // the audit trail names a person, never the client's claim
+        p.actor_email = sess.email;
         p.role = sess.role;
         SESSION_OUT_ = makeStaffSession_(sess);
       } else {
         p.actor = 'master';
+        p.actor_email = '';
         p.role = 'admin';
       }
       // Managing accounts is for admins (or the master key).

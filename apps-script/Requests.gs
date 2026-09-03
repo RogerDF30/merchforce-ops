@@ -36,6 +36,12 @@ function fnRequestSubmit_(p) {
 
   var id = nextRequestId_();
   var total = cleaned.reduce(function (s, l) { return s + l.total; }, 0);
+  var assignee = String(p.assigned_to || '').toLowerCase().trim();
+  var assigneeName = '';
+  if (assignee) {
+    var au = readRows_('Users').filter(function (x) { return String(x.email).toLowerCase() === assignee; })[0];
+    assigneeName = au ? (au.name || au.email) : assignee;
+  } else if (p.actor_email) { assignee = String(p.actor_email).toLowerCase(); assigneeName = p.actor; }
   appendRecord_('Requests', {
     request_id: id, created: now_(), status: 'New',
     company: String(p.company).slice(0, 200), contact: String(p.contact).slice(0, 100),
@@ -47,7 +53,9 @@ function fnRequestSubmit_(p) {
     // Staff-raised requests can carry these up front; the storefront never did.
     ship_address: String(p.ship_address || '').slice(0, 500),
     place_of_supply: String(p.place_of_supply || '').slice(0, 2),
-    company_id: String(p.company_id || ''), raised_by: String(p.actor || p.raised_by || '')
+    company_id: String(p.company_id || ''), raised_by: String(p.actor || p.raised_by || ''),
+    // follow-up owner: whoever was picked, else the person raising it
+    assigned_to: assignee, assigned_name: assigneeName
   });
   cleaned.forEach(function (l, idx) {
     appendRecord_('RequestLines', {
@@ -96,6 +104,32 @@ function fnAdminRequests_(p) {
     };
   }).reverse();
   return ok_({ requests: out });
+}
+
+/** Hand an enquiry to a member of staff for follow-up; they get an email. */
+function fnAdminRequestAssign_(p) {
+  var rowNum = findRow_('Requests', function (r) { return r.request_id === p.id; });
+  if (rowNum < 0) return err_('Enquiry not found');
+  var email = String(p.assigned_to || '').toLowerCase().trim();
+  var name = '';
+  if (email) {
+    var u = readRows_('Users').filter(function (x) { return String(x.email).toLowerCase() === email && isTrue_(x.active); })[0];
+    if (!u) return err_('No active staff account with that email');
+    name = u.name || u.email;
+  }
+  var req = readRows_('Requests')[rowNum - 2];
+  var was = req.assigned_to || '';
+  req.assigned_to = email; req.assigned_name = name; req.updated = now_();
+  writeRecord_('Requests', rowNum, req);
+  audit_(p.actor || 'admin', 'request_assign', p.id, (was || 'nobody') + ' → ' + (email || 'nobody'));
+  if (email && email !== was && email !== String(p.actor_email || '').toLowerCase()) {
+    try {
+      sendMail_(email, '[' + APP_NAME + '] ' + req.request_id + ' assigned to you',
+        (p.actor || 'A colleague') + ' assigned enquiry ' + req.request_id + ' (' + req.company + ' · ' + req.status + ') to you for follow-up.\n\n' +
+        'Open the console and look under My enquiries.');
+    } catch (e) { /* mail is best effort */ }
+  }
+  return ok_({ id: p.id, assigned_to: email, assigned_name: name });
 }
 
 function safeJson_(v) { try { return JSON.parse(v || '{}'); } catch (e) { return {}; } }

@@ -30,10 +30,32 @@ function companyKey_(name) {
 /** The new tabs reach a live sheet through setup_, so say so rather than throwing. */
 function companiesReady_() {
   var ss = db_();
-  return !!(ss.getSheetByName('Companies') && ss.getSheetByName('Contacts'));
+  var co = ss.getSheetByName('Companies');
+  if (!co || !ss.getSheetByName('Contacts') || !ss.getSheetByName('AccountNotes') || !ss.getSheetByName('AccountFiles')) return false;
+  var hdr = co.getRange(1, 1, 1, Math.max(1, co.getLastColumn())).getValues()[0];
+  return hdr.indexOf('ship_country') >= 0;
 }
-var NOT_READY_ = 'The Companies and Contacts tabs do not exist in the sheet yet. ' +
+var NOT_READY_ = 'The account tabs and columns do not exist in the sheet yet. ' +
   'Open the Apps Script editor and run setupRun once — it appends the new tabs and columns and leaves existing data alone.';
+
+function addr_(a) {
+  return { line1: String(a.line1 || '').trim(), line2: String(a.line2 || '').trim(), city: String(a.city || '').trim(),
+           state: String(a.state || '').trim(), pin: String(a.pin || '').trim(), country: String(a.country || '').trim() || 'India' };
+}
+function addrText_(a) {
+  return [a.line1, a.line2, a.city, [a.state, a.pin].filter(String).join(' '), a.country].filter(String).join(', ');
+}
+function stateCodeByName_(name) {
+  var k = String(name || '').trim().toLowerCase();
+  if (!k) return '';
+  var out = '';
+  Object.keys(GST_STATES).forEach(function (code) { if (GST_STATES[code].toLowerCase() === k) out = code; });
+  return out;
+}
+function addrOut_(r, pfx) {
+  return { line1: r[pfx + '_line1'] || '', line2: r[pfx + '_line2'] || '', city: r[pfx + '_city'] || '',
+           state: r[pfx + '_state'] || '', pin: String(r[pfx + '_pin'] || ''), country: r[pfx + '_country'] || '' };
+}
 
 function fnAdminCompanies_(p) {
   if (!companiesReady_()) return err_(NOT_READY_);
@@ -57,15 +79,20 @@ function fnAdminCompanies_(p) {
   });
   var byCo = {};
   contacts.forEach(function (c) { byCo[c.company_id] = (byCo[c.company_id] || 0) + 1; });
+  var noteCount = {}, fileCount = {};
+  if (db_().getSheetByName('AccountNotes')) readRows_('AccountNotes').forEach(function (n) { noteCount[String(n.company_id)] = (noteCount[String(n.company_id)] || 0) + 1; });
+  if (db_().getSheetByName('AccountFiles')) readRows_('AccountFiles').forEach(function (f) { fileCount[String(f.company_id)] = (fileCount[String(f.company_id)] || 0) + 1; });
 
   var companies = readRows_('Companies').map(function (r) {
     var id = String(r.company_id);
     return {
       id: id, name: r.name, gstin: r.gstin, phone: r.phone, email: r.email,
       billing_address: r.billing_address, ship_address: r.ship_address,
-      state_code: r.state_code, owner: r.owner, notes: r.notes,
+      state_code: r.state_code, owner: r.owner, owner_email: String(r.owner_email || '').toLowerCase(), notes: r.notes,
+      bill: addrOut_(r, 'bill'), ship: addrOut_(r, 'ship'), ship_same: r.ship_same === '' || r.ship_same === undefined ? true : isTrue_(r.ship_same),
       active: isTrue_(r.active), created: String(r.created || ''),
-      contacts: byCo[id] || 0, orders: orders[id] || 0, value: Math.round(value[id] || 0)
+      contacts: byCo[id] || 0, orders: orders[id] || 0, value: Math.round(value[id] || 0),
+      notes_count: noteCount[id] || 0, files_count: fileCount[id] || 0
     };
   }).sort(function (a, b) { return b.value - a.value || String(a.name).localeCompare(String(b.name)); });
 
@@ -97,13 +124,26 @@ function fnAdminCompanySave_(p) {
   try {
     var id = d.id || nextId_('Companies', 'company_id', 'CO');
     var rowNum = findRow_('Companies', function (r) { return String(r.company_id) === String(id); });
+    var bill = addr_(d.bill || {}), ship = d.ship_same === false ? addr_(d.ship || {}) : bill;
+    // Composed strings stay in the legacy columns: the PI and the order page print those.
+    var billText = addrText_(bill) || String(d.billing_address || '');
+    var shipText = d.ship_same === false ? (addrText_(ship) || String(d.ship_address || '')) : billText;
+    var stateCode = String(d.state_code || '').trim() || stateCodeByName_(bill.state) || stateCodeOf_(d.gstin);
     var rec = {
       company_id: id, name: String(d.name).trim(), gstin: String(d.gstin || '').trim().toUpperCase(),
       phone: d.phone || '', email: d.email || '',
-      billing_address: d.billing_address || '', ship_address: d.ship_address || '',
-      state_code: String(d.state_code || '').trim(), owner: d.owner || '', notes: d.notes || '',
-      active: d.active === false ? 'FALSE' : 'TRUE', updated: now_()
+      billing_address: billText, ship_address: shipText,
+      state_code: stateCode, owner: d.owner || '', notes: d.notes || '',
+      active: d.active === false ? 'FALSE' : 'TRUE', updated: now_(),
+      owner_email: String(d.owner_email || '').toLowerCase().trim(),
+      bill_line1: bill.line1, bill_line2: bill.line2, bill_city: bill.city, bill_state: bill.state, bill_pin: bill.pin, bill_country: bill.country,
+      ship_same: d.ship_same === false ? 'FALSE' : 'TRUE',
+      ship_line1: ship.line1, ship_line2: ship.line2, ship_city: ship.city, ship_state: ship.state, ship_pin: ship.pin, ship_country: ship.country
     };
+    if (rec.owner_email) {
+      var ou = readRows_('Users').filter(function (u) { return String(u.email).toLowerCase() === rec.owner_email; })[0];
+      if (ou) rec.owner = ou.name || ou.email;
+    }
     if (rowNum > 0) {
       rec.created = readRows_('Companies')[rowNum - 2].created;
       writeRecord_('Companies', rowNum, rec);
