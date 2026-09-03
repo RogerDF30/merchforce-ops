@@ -331,6 +331,7 @@ function fnAdminSupplyReceive_(p) {
     writeRecord_('Supply', rowNum, rec);
     CacheService.getScriptCache().remove('catalog_v1');
     audit_(p.actor || 'admin', 'supply_receive', rec.so_id, rec.sku + ' +' + qty + ' → ' + rec.status);
+    writeBackStock_([String(rec.sku)], p.actor);
     return ok_({ supply: supplyOut_(rec) });
   } finally {
     lock.releaseLock();

@@ -238,6 +238,7 @@ const ACTIONS = {
       owner: d.owner || '', owner_email: d.owner_email || '', notes: d.notes || '', bill, ship, ship_same: d.ship_same !== false, active: d.active !== false, contacts: 0, orders: 0, value: 0, notes_count: 0, files_count: 0 };
     if (id === 'CO-0001') Object.assign(db.company, rec); else { const i = db.extraCompanies.findIndex(c => c.id === id); if (i >= 0) db.extraCompanies[i] = rec; else db.extraCompanies.push(rec); }
     return { ok: true, id }; },
+  adminSyncWriteBackAll: () => ({ ok: true, written: 24, errors: [] }),
   adminStock: () => stockBoard(),
   adminSupplyFields: b => { const p = prodOf(String(b.sku || '').toUpperCase()) || prodOf(b.sku); if (!p) return { ok: false, error: 'Product not found: ' + b.sku };
     p.supply_mode = b.supply_mode === 'make' ? 'make' : 'buy'; p.vendor = b.vendor || ''; p.vendor_moq = Number(b.vendor_moq) || ''; p.batch_qty = Number(b.batch_qty) || '';
@@ -615,7 +616,7 @@ const ACTIONS = {
     db.settings.sync_maps = JSON.stringify(maps);
     return { ok: true, results, maps };
   },
-  adminSyncTemplate: () => ({ ok: true, url: 'https://docs.google.com/spreadsheets/d/mock-template', sheet_id: 'mock-template', name: 'Merchforce Stock Template — 31 Aug 2026' }),
+  adminSyncTemplate: b => ({ ok: true, url: 'https://docs.google.com/spreadsheets/d/mock-template', sheet_id: 'mock-template', name: 'Merchforce Stock Sheet — 3 Sept 2026', linked: b.link ? (b.brand ? 1 : 6) : 0, shared: b.editor_email || '', maps: b.link ? JSON.parse(db.settings.sync_maps || '[]').concat([{ mode: 'pull', brand: b.brand || 'BR-PARKER', sheet: 'mock-template', tab: 'Parker', sku_col: 'Code', fields: [{ col: 'Stock', field: 'on_hand' }], sources: [{ tab: 'Parker', sku_col: 'Code', fields: [{ col: 'Stock', field: 'on_hand' }] }], create_new: true, write_back: true }]) : undefined }),
   adminSyncSchedule: b => { db.settings.sync_auto = ['live5','hourly','daily'].includes(b.mode) ? b.mode : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
   syncPing: b => ({ ok: true, synced: 1, touched: 2 }),
   adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings, relay_status: db.relayStatus || null }; },

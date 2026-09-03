@@ -153,9 +153,12 @@ function fnAdminSyncMapSave_(p) {
   var rec = { mode: mode, brand: m.brand || '', sheet: m.sheet, tab: m.tab || '',
               sku_col: m.sku_col || '', fields: fields, sources: sources,
               create_new: !!m.create_new,
+              // pull maps that carry on_hand can have the app write stock back into the sheet
+              write_back: mode === 'pull' && m.write_back !== false && m.write_back !== 'false',
               push_key: '', headers: null, sample: null, tabs_meta: null, last: null };
   if (p.index !== undefined && maps[idx]) {
     rec.last = maps[idx].last;
+    rec.write_back_last = maps[idx].write_back_last || null;
     rec.push_key = maps[idx].push_key || '';
     rec.headers = maps[idx].headers || null;
     rec.sample = maps[idx].sample || null;
@@ -497,20 +500,99 @@ function fnSyncPush_(p) {
   return ok_({ summary: summary });
 }
 
-/**
- * Generate the supplier stock template: one Google Sheet in the Merchforce
- * Drive folder, one tab per brand, in the supplier's own format
- * (Code | Product Name | MRP | Selling Price Excluding GST | Stock),
- * pre-filled from the live catalog. Link-shared for viewing; the supplier
- * copies it (File → Make a copy) and starts maintaining it.
+/* ---------------- write-back ----------------
+ * The link is normally one way (sheet → app). With write_back on, every stock
+ * movement the app makes (PO received, dispatch, supply received, manual
+ * adjust) is written into the supplier's sheet as well, so their sheet shows
+ * the same on_hand the app holds and the next pull does not undo the movement.
+ * Only pull mappings can do this: a push mapping never opens the sheet.
  */
+
+/** skus: array of SKU strings whose on_hand just changed. Best effort; never throws. */
+function writeBackStock_(skus, actor) {
+  var out = { written: 0, errors: [] };
+  try {
+    var all = getSyncMaps_();
+    var maps = all.filter(function (m) { return m.mode !== 'push' && m.write_back && m.sheet; });
+    if (!maps.length || !skus || !skus.length) return out;
+    var wanted = {};
+    skus.forEach(function (k) { wanted[skuKey_(k)] = 1; });
+    var products = readRows_('Products').filter(function (r) { return wanted[skuKey_(r.sku)]; });
+    if (!products.length) return out;
+    var touched = false;
+    maps.forEach(function (m) {
+      var written = 0, err = '';
+      mapSources_(m).forEach(function (src) {
+        var f = (src.fields || []).filter(function (x) { return x.field === 'on_hand'; })[0];
+        if (!f) return;
+        var mine = products.filter(function (r) { return !m.brand || r.brand_id === m.brand; });
+        if (!mine.length) return;
+        try {
+          var o = openSupplierSheet_(m.sheet, src.tab);
+          var last = o.sh.getLastRow(), lastCol = o.sh.getLastColumn();
+          if (last < 2) return;
+          var headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+          var iSku = headers.indexOf(String(src.sku_col).trim()), iStock = headers.indexOf(String(f.col).trim());
+          if (iSku < 0 || iStock < 0) throw new Error('column "' + (iSku < 0 ? src.sku_col : f.col) + '" not found in tab "' + (src.tab || 'first') + '"');
+          var skuCol = o.sh.getRange(2, iSku + 1, last - 1, 1).getValues();
+          var rowOf = {};
+          skuCol.forEach(function (row, i) { var k = skuKey_(row[0]); if (k && rowOf[k] === undefined) rowOf[k] = i + 2; });
+          mine.forEach(function (r) {
+            var rowNum = rowOf[skuKey_(r.sku)];
+            if (!rowNum) return;
+            var cell = o.sh.getRange(rowNum, iStock + 1);
+            var next = toNum_(r.on_hand);
+            if (Number(cell.getValue()) === next) return;
+            cell.setValue(next);
+            written++;
+          });
+        } catch (e) {
+          err = (m.brand || 'all') + ': ' + (e.message || e);
+          out.errors.push(err);
+        }
+      });
+      if (written || err) { m.write_back_last = { ts: String(now_()), written: written, error: err }; touched = true; }
+      out.written += written;
+    });
+    if (touched) saveSyncMaps_(all);
+    if (out.errors.length) audit_(actor || 'system', 'writeback_fail', skus.slice(0, 10).join(','), out.errors.join(' | '));
+  } catch (e) {
+    out.errors.push(String(e.message || e));
+    try { audit_(actor || 'system', 'writeback_fail', (skus || []).slice(0, 10).join(','), String(e.message || e)); } catch (e2) {}
+  }
+  return out;
+}
+
+/** Push every product's on_hand into the linked sheets now (after turning write-back on, or to repair drift). */
+function fnAdminSyncWriteBackAll_(p) {
+  var skus = readRows_('Products').map(function (r) { return String(r.sku); });
+  var res = writeBackStock_(skus, p.actor);
+  audit_(p.actor || 'admin', 'writeback_all', '', res.written + ' cells');
+  return ok_(res);
+}
+
+/* ---------------- standard format ----------------
+ * A supplier with no usable sheet gets one in the app's own Drive: one tab per
+ * brand in the Merchforce format, shared with them as editor, already mapped
+ * (pull, write-back on) so it works the moment they open it.
+ */
+var TEMPLATE_HEADERS_ = ['Code', 'Product Name', 'HSN', 'GST %', 'MRP', 'Selling Price Excluding GST', 'Stock', 'MOQ', 'Lead Time'];
+var TEMPLATE_FIELDS_ = [
+  { col: 'Product Name', field: 'name' }, { col: 'HSN', field: 'hsn' }, { col: 'GST %', field: 'gst_rate' },
+  { col: 'MRP', field: 'mrp' }, { col: 'Selling Price Excluding GST', field: 'price' }, { col: 'Stock', field: 'on_hand' },
+  { col: 'MOQ', field: 'moq' }, { col: 'Lead Time', field: 'lead_time' }
+];
+
+/** Build the standard-format sheet. p.link: also create mappings; p.editor_email: share with the supplier; p.brand: one brand only. */
 function fnAdminSyncTemplate_(p) {
   var root = DriveApp.getFolderById(props_().getProperty('FOLDER_ID'));
-  var name = 'Merchforce Stock Template — ' + Utilities.formatDate(now_(), 'Asia/Kolkata', 'd MMM yyyy');
+  var name = String(p.name || '').trim() || ('Merchforce Stock Sheet — ' + Utilities.formatDate(now_(), 'Asia/Kolkata', 'd MMM yyyy'));
   var ss = SpreadsheetApp.create(name);
   DriveApp.getFileById(ss.getId()).moveTo(root);
 
   var brands = readRows_('Brands').sort(function (a, b) { return toNum_(a.sort) - toNum_(b.sort); });
+  if (p.brand) brands = brands.filter(function (b) { return b.brand_id === p.brand; });
+  if (!brands.length) return err_('No brands to build tabs for');
   var products = readRows_('Products');
   var firstTier = {};
   readRows_('PriceTiers').forEach(function (t) {
@@ -518,27 +600,62 @@ function fnAdminSyncTemplate_(p) {
     if (!cur || toNum_(t.min_qty) < cur.min) firstTier[t.sku] = { min: toNum_(t.min_qty), price: toNum_(t.unit_price) };
   });
 
-  var HEADERS = ['Code', 'Product Name', 'HSN', 'GST %', 'MRP', 'Selling Price Excluding GST', 'Stock'];
+  var HEADERS = TEMPLATE_HEADERS_;
   brands.forEach(function (b) {
     var rows = products.filter(function (pr) { return pr.brand_id === b.brand_id; })
       .map(function (pr) {
-        return [pr.sku, pr.name, String(pr.hsn || ''), toNum_(pr.gst_rate) || '',
-                toNum_(pr.mrp) || '',
-                firstTier[pr.sku] ? firstTier[pr.sku].price : '', toNum_(pr.on_hand)];
+        return [String(pr.sku), pr.name, String(pr.hsn || ''), toNum_(pr.gst_rate) || '',
+                toNum_(pr.mrp) || '', firstTier[pr.sku] ? firstTier[pr.sku].price : '',
+                toNum_(pr.on_hand), toNum_(pr.moq) || '', pr.lead_time || ''];
       });
     var sh = ss.insertSheet(b.name);
-    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
-      .setFontWeight('bold').setBackground('#eef1ff');
+    sh.getRange(1, 1, Math.max(2, rows.length + 1), 1).setNumberFormat('@');   // codes stay text
+    sh.getRange(1, 3, Math.max(2, rows.length + 1), 1).setNumberFormat('@');   // HSN keeps leading zeros
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold').setBackground('#eef1ff');
     sh.setFrozenRows(1);
     if (rows.length) sh.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
     sh.autoResizeColumns(1, HEADERS.length);
   });
+  var guide = ss.insertSheet('How to use', 0);
+  guide.getRange(1, 1, 8, 1).setValues([
+    ['Merchforce stock sheet'],
+    ['One tab per brand. Keep the header row exactly as it is; the app finds columns by name.'],
+    ['Code is the SKU the app knows. Do not rename a code; add a new row for a new product.'],
+    ['Stock is on hand. The app reads it, and writes it back after every order, dispatch and receipt, so it always matches the console.'],
+    ['Selling Price Excluding GST sets the first price tier. Deeper tiers are managed in the console.'],
+    ['Leave a cell blank to leave that field alone in the app.'],
+    ['Do not add rows above the header, and do not merge cells.'],
+    ['Sync runs on the schedule set in the console (Settings → Sheet sync), or instantly with the connector.']
+  ]);
+  guide.getRange(1, 1).setFontWeight('bold').setFontSize(14);
+  guide.setColumnWidth(1, 900);
   var s1 = ss.getSheetByName('Sheet1');
   if (s1 && ss.getSheets().length > 1) ss.deleteSheet(s1);
 
-  DriveApp.getFileById(ss.getId()).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  audit_(p.actor || 'admin', 'sync_template', ss.getId(), brands.length + ' brand tabs');
-  return ok_({ url: ss.getUrl(), sheet_id: ss.getId(), name: name });
+  var file = DriveApp.getFileById(ss.getId());
+  var shared = '';
+  var editor = String(p.editor_email || '').trim();
+  if (editor) {
+    try { file.addEditor(editor); shared = editor; }
+    catch (e) { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT); shared = 'anyone with the link (could not add ' + editor + ': ' + e.message + ')'; }
+  } else {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  }
+
+  var linked = 0;
+  if (p.link) {
+    var maps = getSyncMaps_();
+    brands.forEach(function (b) {
+      maps = maps.filter(function (m) { return !(m.mode !== 'push' && m.brand === b.brand_id); });   // replace any pull map for this brand
+      maps.push({ mode: 'pull', brand: b.brand_id, sheet: ss.getId(), tab: b.name, sku_col: 'Code',
+                  fields: TEMPLATE_FIELDS_, sources: [{ tab: b.name, sku_col: 'Code', fields: TEMPLATE_FIELDS_ }],
+                  create_new: true, write_back: true, push_key: '', headers: null, sample: null, tabs_meta: null, last: null });
+      linked++;
+    });
+    saveSyncMaps_(maps);
+  }
+  audit_(p.actor || 'admin', 'sync_template', ss.getId(), brands.length + ' brand tabs' + (linked ? ', linked' : '') + (shared ? ', shared with ' + shared : ''));
+  return ok_({ url: ss.getUrl(), sheet_id: ss.getId(), name: name, linked: linked, shared: shared, maps: getSyncMaps_() });
 }
 
 /** getEffectiveUser needs the userinfo.email scope — fall back gracefully. */

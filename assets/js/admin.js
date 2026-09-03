@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v26';
+var BUILD = 'v27';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -200,7 +200,7 @@ $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') 
 $('lockNow').onclick = function () { lock('Signed out.'); };
 
 /* ---------- tabs ---------- */
-var LOADERS = { enquiries: loadEnquiries, orders: loadOrders, mine: loadMine, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, accounts: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
+var LOADERS = { enquiries: loadEnquiries, orders: loadOrders, mine: loadMine, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, accounts: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: loadSettings };
 document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
     document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
@@ -2639,6 +2639,11 @@ function renderAnalytics() {
 }
 
 /* ================= SETTINGS + STOCK SYNC ================= */
+function loadSettings() {
+  var need = A.brands.length ? Promise.resolve() : api('adminCatalog').then(function (res) { A.products = res.products; A.brands = res.brands; }).catch(function () {});
+  need.then(renderSettings);
+}
+
 function renderSettings() {
   A.loaded.settings = true;
   var s = A.settings;
@@ -3023,7 +3028,9 @@ function renderSyncCard(s) {
       '<br><span class="pill" style="font-size:10.5px;' + (push
         ? 'background:#f1e8ff;color:#7a3cf0">sheet pushes to us'
         : 'background:var(--accent-soft);color:var(--accent)">we read the sheet') + '</span>' +
-      (m.create_new ? ' <span class="pill" style="background:var(--ok-soft);color:var(--ok);font-size:10.5px">auto-creates new</span>' : '') + '</td>' +
+      (m.create_new ? ' <span class="pill" style="background:var(--ok-soft);color:var(--ok);font-size:10.5px">auto-creates new</span>' : '') +
+      (!push && m.write_back ? ' <span class="pill" style="background:var(--ok-soft);color:var(--ok);font-size:10.5px" title="Stock movements in the app are written into this sheet">writes stock back</span>' : '') +
+      (!push && m.write_back && m.write_back_last && m.write_back_last.error ? '<br><small style="color:var(--bad)">write-back failed: ' + esc(m.write_back_last.error) + '</small>' : '') + '</td>' +
       '<td style="font-size:12px;color:var(--ink-3)">' +
         (push ? (mapped ? srcs.length + ' tab' + (srcs.length === 1 ? '' : 's') : 'sheet') + '<br>(private to supplier)'
               : '…' + esc(String(m.sheet).slice(-8))) + '</td>' +
@@ -3049,7 +3056,7 @@ function renderSyncCard(s) {
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
         '<button class="btn primary small" id="yAdd">+ Add brand mapping</button>' +
         (maps.length > 1 ? '<button class="btn small" id="ySyncAll">Sync all now</button>' : '') +
-        '<button class="btn small" id="yTemplate">Generate template sheet</button>' +
+        '<button class="btn small" id="yWriteAll" title="Write every product\'s on hand into the linked sheets now">Write stock back now</button>' +
         '<button class="btn small" id="yLive">⚡ Instant sync setup</button>' +
         '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-left:auto">Auto-sync' +
           '<select id="yAuto" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px">' +
@@ -3059,7 +3066,16 @@ function renderSyncCard(s) {
             '<option value="daily"' + (s.sync_auto === 'daily' ? ' selected' : '') + '>Daily (~6 am)</option>' +
           '</select></label>' +
       '</div>' +
-      '<p class="note" id="yTplOut" style="margin-top:10px"></p>' +
+      '<div class="card-block" style="margin-top:16px"><h3>Standard format for a supplier without a usable sheet</h3>' +
+        '<p class="note-sub" style="margin:-4px 0 12px">Creates a Google Sheet in the Merchforce Drive folder in the Merchforce format (Code · Product Name · HSN · GST % · MRP · Selling Price Excluding GST · Stock · MOQ · Lead Time), one tab per brand, pre-filled from the catalogue, with a How to use tab. ' +
+          'Linked as a pull mapping with write-back on, so the sheet and the console show the same stock from the first day.</p>' +
+        '<div class="f2">' +
+          '<div class="field"><label>Share with (supplier\'s Google account, optional)</label><input id="yTplEmail" type="email" placeholder="stock@supplier.com"></div>' +
+          '<div class="field"><label>Brands</label><select id="yTplBrand"><option value="">All brands, one tab each</option>' + A.brands.map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(b.name) + ' only</option>'; }).join('') + '</select></div>' +
+        '</div>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-bottom:10px"><input type="checkbox" id="yTplLink" checked> Link it now (replaces any existing pull mapping for those brands)</label>' +
+        '<button class="btn primary small" id="yTemplate">Create the sheet</button>' +
+        '<p class="note" id="yTplOut" style="margin-top:10px"></p></div>' +
     '</div>';
 }
 
@@ -3096,12 +3112,26 @@ function wireSyncCard() {
     };
   }
   $('yTemplate').onclick = function () {
+    var email = $('yTplEmail').value.trim();
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('yTplOut').textContent = 'That email does not look right.'; return; }
     $('yTemplate').disabled = true;
-    $('yTplOut').textContent = 'Building the template sheet…';
-    api('adminSyncTemplate', {}).then(function (res) {
+    $('yTplOut').textContent = 'Building the sheet…';
+    api('adminSyncTemplate', { editor_email: email, brand: $('yTplBrand').value, link: $('yTplLink').checked }).then(function (res) {
       $('yTemplate').disabled = false;
-      $('yTplOut').innerHTML = 'Template ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a> — one tab per brand, in the supplier\'s format (Code · Product Name · HSN · GST % · MRP · Selling Price Excluding GST · Stock). Ask the supplier to File → Make a copy and maintain theirs.';
+      if (res.maps) A.settings.sync_maps = JSON.stringify(res.maps);
+      $('yTplOut').innerHTML = 'Ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a>' +
+        (res.shared ? ' · shared with ' + esc(res.shared) + ' as editor' : ' · view-only link; share it with the supplier from Drive') +
+        (res.linked ? ' · ' + res.linked + ' brand mapping' + (res.linked === 1 ? '' : 's') + ' linked with write-back on.' : '.');
+      if (res.linked) toast('Sheet created and linked'); else toast('Sheet created');
+      if (res.linked) setTimeout(renderSettings, 1200);
     }).catch(function (e) { $('yTemplate').disabled = false; $('yTplOut').textContent = e.message; });
+  };
+  if ($('yWriteAll')) $('yWriteAll').onclick = function () {
+    $('yWriteAll').disabled = true;
+    api('adminSyncWriteBackAll').then(function (res) {
+      toast(res.written + ' stock cell' + (res.written === 1 ? '' : 's') + ' written' + (res.errors.length ? ' · ' + res.errors[0] : ''));
+      return refreshSettings_();
+    }).catch(function (e) { toast(e.message); }).then(function () { if ($('yWriteAll')) $('yWriteAll').disabled = false; });
   };
   $('yLive').onclick = openLiveSyncHelp;
   var auto = $('yAuto');
@@ -3186,6 +3216,10 @@ function openMapEditor(m, index) {
     '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-top:14px">' +
       '<input type="checkbox" id="zCreate"' + (m.create_new ? ' checked' : '') + '> Auto-create products for new SKUs in this sheet' +
     '</label>' +
+    '<label id="zWbWrap" style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-top:10px"' + (mode === 'push' ? ' hidden' : '') + '>' +
+      '<input type="checkbox" id="zWriteBack"' + (m.write_back !== false ? ' checked' : '') + '> Write stock back to this sheet' +
+    '</label>' +
+    '<p class="note" style="margin:4px 0 0">Every order, dispatch, receipt and manual adjustment in the console updates the Stock column in the sheet, so the sheet never undoes the app\'s movements on the next sync. Needs Editor access to the sheet and a Stock column in the mapping. Not available for push mappings.</p>' +
     '<p class="note" style="margin:4px 0 0">New products are created hidden (not on the storefront) under this mapping\'s brand, so you can review and publish them from the Catalog tab. Needs a specific brand selected.</p>' +
     '<div class="form-err" id="mErr"></div>' +
     '<button class="btn primary" id="zSave" style="width:100%;justify-content:center;margin-top:10px">Save mapping</button>');
@@ -3336,9 +3370,10 @@ function openMapEditor(m, index) {
   function paintMode() {
     var push = $('zMode').value === 'push';
     $('zPullBox').hidden = push;
+    $('zWbWrap').hidden = push;
     $('zModeNote').innerHTML = push
       ? 'For suppliers who will not share their file. A small connector runs on <b>their</b> sheet and sends only the columns you map here — Merchforce never opens the file. You get the connector script right after saving.'
-      : 'Merchforce opens the sheet directly. The supplier shares it with the backend account (Viewer is enough).';
+      : 'Merchforce opens the sheet directly. The supplier shares it with the backend account: Viewer to read, <b>Editor</b> if stock is to be written back.';
     $('zSave').textContent = push ? 'Save mapping & get connector' : 'Save mapping & sync now';
     paintMap();
   }
@@ -3381,7 +3416,7 @@ function openMapEditor(m, index) {
                            tab: sources[0] ? sources[0].tab : '',
                            sku_col: sources[0] ? sources[0].sku_col : '',
                            fields: sources[0] ? sources[0].fields : [],
-                           sources: sources, create_new: $('zCreate').checked } };
+                           sources: sources, create_new: $('zCreate').checked, write_back: !push && $('zWriteBack').checked } };
     if (index !== null && index !== undefined) payload.index = index;
     api('adminSyncMapSave', payload).then(function (res) {
       var idx = (index !== null && index !== undefined) ? index : res.maps.length - 1;

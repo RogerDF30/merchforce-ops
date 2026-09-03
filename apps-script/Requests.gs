@@ -206,6 +206,7 @@ function adjustStock_(lines, mode, dir, reason, actor) {
   var cols = SHEETS.Products;
   var iOnHand = cols.indexOf('on_hand') + 1;
   var iReserved = cols.indexOf('reserved') + 1;
+  var moved = [];
   lines.forEach(function (l) {
     var rowNum = findRow_('Products', function (r) { return skuKey_(r.sku) === skuKey_(l.sku); });
     if (rowNum < 0) return;
@@ -214,10 +215,12 @@ function adjustStock_(lines, mode, dir, reason, actor) {
       sh.getRange(rowNum, iOnHand).setValue(toNum_(sh.getRange(rowNum, iOnHand).getValue()) - qty);
       sh.getRange(rowNum, iReserved).setValue(Math.max(0, toNum_(sh.getRange(rowNum, iReserved).getValue()) - qty));
       appendRecord_('StockLog', { ts: now_(), sku: l.sku, delta: -qty, reason: reason, actor: actor || 'admin' });
+      moved.push(String(l.sku));
     } else {
       var cur = toNum_(sh.getRange(rowNum, iReserved).getValue());
       sh.getRange(rowNum, iReserved).setValue(Math.max(0, cur + dir * qty));
       appendRecord_('StockLog', { ts: now_(), sku: l.sku, delta: 0, reason: reason + ' (reserved ' + (dir > 0 ? '+' : '-') + qty + ')', actor: actor || 'admin' });
     }
   });
+  if (moved.length) writeBackStock_(moved, actor);
 }

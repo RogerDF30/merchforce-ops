@@ -74,13 +74,15 @@ function fnAdminProductSave_(p) {
       var existing = readRows_('Products')[rowNum - 2];
       rec.reserved = existing.reserved; // stock reservations are lifecycle-owned
       rec.created = existing.created;
-      if (toNum_(existing.on_hand) !== rec.on_hand) {
+      var stockChanged = toNum_(existing.on_hand) !== rec.on_hand;
+      if (stockChanged) {
         appendRecord_('StockLog', {
           ts: now_(), sku: d.sku, delta: rec.on_hand - toNum_(existing.on_hand),
           reason: 'manual adjust', actor: p.actor || 'admin'
         });
       }
       writeRecord_('Products', rowNum, rec);
+      if (stockChanged) writeBackStock_([d.sku], p.actor);
     } else {
       rec.created = now_();
       rec.reserved = 0;

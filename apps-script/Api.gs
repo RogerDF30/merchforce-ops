@@ -77,6 +77,7 @@ function doPost(e) {
       adminSyncMapSave:   fnAdminSyncMapSave_,
       adminSyncMapDelete: fnAdminSyncMapDelete_,
       adminSyncTemplate:  fnAdminSyncTemplate_,
+      adminSyncWriteBackAll: fnAdminSyncWriteBackAll_,
       adminDedupe:        fnAdminDedupe_,
       adminMailTest:      fnAdminMailTest_,
       adminOrders:        fnAdminOrders_,
