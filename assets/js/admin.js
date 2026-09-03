@@ -1,4 +1,4 @@
-/* Merchforce admin console — RSM-style */
+/* Merchforce console */
 'use strict';
 
 var CONFIG = {
@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v28';
+var BUILD = 'v29';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -100,8 +100,27 @@ function restoreSession() {
   } catch (e) { return false; }
 }
 
+/* The tool's own branding (Settings → Branding): header, sign-in screen, tab title.
+   Cached locally so the sign-in screen already carries it before anyone signs in. */
+function applyBranding(s) {
+  s = s || {};
+  var name = String(s.app_name || '').trim() || 'Merchforce';
+  var tag = String(s.app_tagline || '').trim();
+  var logo = String(s.app_logo_url || '').trim();
+  document.title = name;
+  document.querySelectorAll('.brand-name').forEach(function (el) { el.textContent = name; });
+  document.querySelectorAll('.brand-tagline').forEach(function (el) { el.textContent = tag; el.hidden = !tag; });
+  document.querySelectorAll('.brand-mark').forEach(function (el) {
+    if (logo) { el.className = 'mark brand-mark has-img'; el.style.background = 'transparent'; el.innerHTML = '<img src="' + esc(logo) + '" alt="">'; }
+    else { el.className = 'mark brand-mark'; el.style.background = 'var(--ink)'; el.textContent = name.charAt(0).toUpperCase(); }
+  });
+  try { localStorage.setItem('mf_brand', JSON.stringify({ app_name: name, app_tagline: tag, app_logo_url: logo })); } catch (e) {}
+}
+try { applyBranding(JSON.parse(localStorage.getItem('mf_brand') || 'null') || {}); } catch (e) {}
+
 function enterConsole(res) {
   A.settings = res.settings;
+  applyBranding(A.settings);
   A.relayStatus = res.relay_status || null;
   if (res.user) A.user = res.user;
   if (res.session_minutes) A.sessionMinutes = Number(res.session_minutes) || 30;
@@ -1226,7 +1245,7 @@ function paintCatalogRows() {
   });
 }
 
-/* Product editor — RSM-style tier rows: min qty @ price, per-tier GST (blank inherits) */
+/* Product editor — tier rows: min qty @ price, per-tier GST (blank inherits) */
 function editProduct(p) {
   var isNew = !p;
   p = p || { sku: '', name: '', brand_id: '', category: '', subcategory: '', description: '', specs: '',
@@ -2369,7 +2388,7 @@ function renderUsers() {
     '<div class="panel-head"><h2>Users</h2>' +
       '<span class="sp"></span><button class="btn primary small" id="uNew">+ User</button></div>' +
     '<p class="note" style="margin-top:-6px">Everyone who uses this console signs in with their own account, so orders, quotations and stock changes are recorded against a person. ' +
-      '<b>Admins</b> can also manage users and settings. Sessions lapse after ' + esc(String(A.sessionMinutes)) + ' minutes of inactivity (Settings → Company).</p>' +
+      '<b>Admins</b> can also manage users and settings. Sessions lock after ' + esc(String(A.sessionMinutes)) + ' minutes of inactivity (Settings → Company).</p>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Last sign-in</th>' +
     '</tr></thead><tbody id="uRows"></tbody></table></div>';
@@ -2416,7 +2435,7 @@ function editUser(u) {
   };
 }
 
-/* ================= ANALYTICS (RSM-style) ================= */
+/* ================= ANALYTICS ================= */
 function loadAnalytics() {
   A.loaded.analytics = true;
   $('p-analytics').innerHTML = '<div class="spin"></div>';
@@ -2648,11 +2667,12 @@ function renderSettings() {
   A.loaded.settings = true;
   var s = A.settings;
   $('p-settings').innerHTML =
-    '<div class="panel-head"><h2>Site settings</h2></div>' +
+    '<div class="panel-head"><h2>Settings</h2></div>' +
+    renderBrandCard(s).replace('margin-top:18px', 'margin-bottom:18px') +
     '<div class="two-col">' +
-      '<div class="card-block"><h3>Identity</h3>' +
-        '<div class="field"><label>Site name</label><input id="sName" value="' + esc(s.site_name) + '"></div>' +
-        '<div class="field"><label>Tagline</label><input id="sTag" value="' + esc(s.tagline) + '"></div>' +
+      '<div class="card-block"><h3>Emails and documents</h3>' +
+        '<div class="field"><label>Business name on emails</label><input id="sName" value="' + esc(s.site_name) + '"></div>' +
+        '<div class="field"><label>Tagline on the order page</label><input id="sTag" value="' + esc(s.tagline) + '"></div>' +
         '<div class="field"><label>Stock display</label><select id="sStock">' +
           '<option value="badge"' + (s.show_stock_numbers === 'badge' ? ' selected' : '') + '>Badge only (In / Low / Out)</option>' +
           '<option value="exact"' + (s.show_stock_numbers === 'exact' ? ' selected' : '') + '>Exact ATP numbers</option>' +
@@ -2664,7 +2684,7 @@ function renderSettings() {
         '<div class="field"><label>Sender name on notifications</label><input id="sFromName" value="' + esc(s.mail_from_name) + '" placeholder="' + esc(s.site_name) + '"></div>' +
         '<div class="field"><label>Stay signed in for</label><select id="sDays">' + [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, 'a year']].map(function (x) {
           return '<option value="' + x[0] + '"' + (String(s.session_days || '30') === String(x[0]) ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
-          '<div class="note" style="margin-top:4px">A sign-in survives reloads and reopens for this long. The console still locks after the inactivity time in the Company card.</div></div>' +
+          '<div class="note" style="margin-top:4px">A sign-in survives reloads and reopens for this long. Merchforce still locks after the inactivity time in the Company card.</div></div>' +
       '</div>' +
     '</div>' +
     '<div class="form-err" id="sErr"></div>' +
@@ -2684,6 +2704,7 @@ function renderSettings() {
       toast('Settings saved');
     }).catch(function (e) { $('sErr').textContent = e.message; $('sSave').disabled = false; });
   };
+  wireBrandCard();
   wireCompanyCard();
   wireDeckCard();
   wireMailCard();
@@ -2758,7 +2779,58 @@ function wireDeckCard() {
   };
 }
 
-/* The supplier's own identity: printed on every PI and, from phase 4, on every deck. */
+/* Branding of the tool itself, as the people using it see it. */
+function renderBrandCard(s) {
+  var logo = s.app_logo_url || '';
+  return '<div class="card-block" style="margin-top:18px"><h3>Branding</h3>' +
+    '<p class="note-sub" style="margin:-4px 0 12px">What everyone who signs in sees: the name in the header and the browser tab, the line under it, and the logo. Customer-facing documents use the Company card instead.</p>' +
+    '<div class="two-col"><div>' +
+      '<div class="field"><label>Tool name</label><input id="bName" value="' + esc(s.app_name || 'Merchforce') + '" maxlength="40"></div>' +
+      '<div class="field"><label>Line under the name</label><input id="bTag" value="' + esc(s.app_tagline || '') + '" maxlength="80" placeholder="leave blank for none"></div>' +
+      '<div class="form-err" id="bErr"></div>' +
+      '<button class="btn primary" id="bSave">Save branding</button> <button class="btn" id="bReset">Reset to Merchforce</button>' +
+    '</div><div>' +
+      '<div class="field"><label>Logo</label>' +
+        '<div class="logo-picker"><div id="bLogoPrev" class="logo-prev' + (logo ? '' : ' no-logo') + '">' + (logo ? '<img src="' + esc(logo) + '" alt="">' : '<span class="logo-none">Letter mark</span>') + '</div>' +
+        '<div class="logo-picker-side"><div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<label class="btn small" for="bLogoFile" style="cursor:pointer">' + (logo ? 'Replace' : 'Choose image') + '</label>' +
+          '<button type="button" class="btn small" id="bLogoClear"' + (logo ? '' : ' hidden') + '>Remove</button></div>' +
+        '<div id="bLogoName" class="note logo-name">Square or wide, PNG or SVG with a transparent background looks best. Shown at 32px high.</div></div></div>' +
+        '<input id="bLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="sr-only"></div>' +
+    '</div></div></div>';
+}
+function wireBrandCard() {
+  var logo = A.settings.app_logo_url || '';
+  $('bLogoFile').onchange = function () {
+    var f = this.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) { $('bErr').textContent = 'That file is over 2MB.'; return; }
+    var rd = new FileReader();
+    rd.onload = function () {
+      $('bLogoName').textContent = 'Uploading ' + f.name + '…'; $('bSave').disabled = true;
+      api('adminImageUpload', { data: rd.result, filename: 'brand-' + f.name, mime: f.type }).then(function (res) {
+        logo = res.url;
+        $('bLogoPrev').className = 'logo-prev'; $('bLogoPrev').innerHTML = '<img src="' + esc(res.url) + '" alt="">';
+        $('bLogoClear').hidden = false; $('bLogoName').textContent = f.name + ' — press Save branding to keep it.'; $('bSave').disabled = false;
+      }).catch(function (e) { $('bErr').textContent = e.message; $('bSave').disabled = false; });
+    };
+    rd.readAsDataURL(f);
+  };
+  $('bLogoClear').onclick = function () {
+    logo = ''; $('bLogoPrev').className = 'logo-prev no-logo'; $('bLogoPrev').innerHTML = '<span class="logo-none">Letter mark</span>';
+    $('bLogoClear').hidden = true; $('bLogoName').textContent = 'Removed — press Save branding to apply.';
+  };
+  $('bReset').onclick = function () { $('bName').value = 'Merchforce'; $('bTag').value = 'Enquiries, orders, stock and decks in one place'; $('bLogoClear').click(); };
+  $('bSave').onclick = function () {
+    var name = $('bName').value.trim();
+    if (!name) { $('bErr').textContent = 'Give the tool a name.'; return; }
+    $('bSave').disabled = true; $('bErr').textContent = '';
+    api('adminSettings', { save: { app_name: name, app_tagline: $('bTag').value.trim(), app_logo_url: logo } }).then(function (res) {
+      A.settings = res.settings; applyBranding(A.settings); toast('Branding saved');
+    }).catch(function (e) { $('bErr').textContent = e.message; }).then(function () { $('bSave').disabled = false; });
+  };
+}
+
+/* The business's identity: printed on every PI and every deck. */
 function renderCompanyCard(s) {
   function f(id, label, val, extra) {
     return '<div class="field"><label>' + label + '</label><input id="' + id + '" value="' + esc(val || '') + '"' + (extra || '') + '></div>';
@@ -2853,7 +2925,7 @@ function wireCompanyCard() {
   };
 }
 
-/* Where notification email is sent from: our account, or the supplier's. */
+/* Where email is sent from: the Merchforce service address, or the customer's own. */
 function renderMailCard(s) {
   var relay = s.mail_mode === 'relay';
   var st = A.relayStatus;
@@ -2861,13 +2933,13 @@ function renderMailCard(s) {
     : st.ok
       ? 'Last relay send ' + esc(String(st.ts).slice(4, 21)) + ' — delivered' +
         (st.remaining === null || st.remaining === undefined ? '' : ' · ' + st.remaining + ' left in their daily quota today')
-      : '<span style="color:var(--bad)">Last relay send failed: ' + esc(st.error || '') + '</span> — that message went out from the Merchforce account instead.';
+      : '<span style="color:var(--bad)">Last relay send failed: ' + esc(st.error || '') + '</span> — that message went out from the Merchforce service address instead.';
   return section('Notification email',
-      'Who the supplier\'s notifications appear to come from. Sending through their own account needs a small relay script in their Google account — no password or token is shared with us.') +
+      'Who your emails to customers appear to come from. Sending from your own address needs a small relay script in your Google account; Merchforce never holds your password or token.') +
     '<div class="panel2">' +
       '<div class="field"><label>Send from</label><select id="wMode">' +
-        '<option value="backend"' + (relay ? '' : ' selected') + '>The Merchforce account (replies go to the buyer)</option>' +
-        '<option value="relay"' + (relay ? ' selected' : '') + '>The supplier\'s own address (via their relay)</option>' +
+        '<option value="backend"' + (relay ? '' : ' selected') + '>The Merchforce service address (replies go to the customer)</option>' +
+        '<option value="relay"' + (relay ? ' selected' : '') + '>Your own address (via a relay in your Google account)</option>' +
       '</select></div>' +
       '<div id="wRelayBox"' + (relay ? '' : ' hidden') + '>' +
         '<div class="field"><label>Relay web-app URL</label><input id="wUrl" value="' + esc(s.relay_url) + '" placeholder="https://script.google.com/macros/s/…/exec"></div>' +
@@ -2922,7 +2994,7 @@ function wireMailCard() {
   $('wScript').onclick = openRelayScript;
 }
 
-/* The relay: a standalone Apps Script the supplier deploys in their own account. */
+/* The relay: a standalone Apps Script the business deploys in its own account. */
 function openRelayScript() {
   var secret = ($('wSecret') && $('wSecret').value.trim()) || '(click Generate first)';
   var code =
@@ -2953,22 +3025,22 @@ function openRelayScript() {
 "  }\n" +
 "}";
   openDrawer(
-    '<h2 style="margin:0 0 4px">Mail relay — send from the supplier\'s own address</h2>' +
-    '<p class="note" style="margin:0 0 14px">This script lives in the <b>supplier\'s</b> Google account. Merchforce posts the message to it and their account does the sending, so the mail leaves their address on their own quota (100 recipients a day on a personal Gmail, 1,500 on Workspace). No password or token of theirs is shared with us, and deleting the deployment revokes it instantly.</p>' +
+    '<h2 style="margin:0 0 4px">Mail relay — send from your own address</h2>' +
+    '<p class="note" style="margin:0 0 14px">This script lives in <b>your</b> Google account. Merchforce hands each message to it and your account does the sending, so the mail leaves your address on your own quota (100 recipients a day on a personal Gmail, 1,500 on Workspace). Merchforce never holds your password or token, and deleting the deployment revokes it instantly.</p>' +
     '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
-      '<li>They open <b>script.google.com</b> → <b>New project</b> and paste the script below.</li>' +
+      '<li>Open <b>script.google.com</b> → <b>New project</b> and paste the script below.</li>' +
       '<li><b>Deploy → New deployment → Web app</b>; "Execute as" <b>Me</b>, "Who has access" <b>Anyone</b>, then authorize.</li>' +
-      '<li>They send you the <b>/exec</b> URL; paste it into the Relay web-app URL field with this same secret.</li>' +
-      '<li>Hit <b>Send test email</b> to confirm it arrives from their address.</li>' +
+      '<li>Copy the <b>/exec</b> URL into the Relay web-app URL field here, with this same secret.</li>' +
+      '<li>Hit <b>Send test email</b> to confirm it arrives from your address.</li>' +
     '</ol>' +
-    '<p class="note">"Anyone" access is needed so our server can reach it — the shared secret is what authorizes each message, and the script can only send mail, nothing else. If the relay ever fails, Merchforce falls back to sending from its own account so nothing is lost.</p>' +
+    '<p class="note">"Anyone" access is needed so Merchforce can reach it; the shared secret is what authorizes each message, and the script can only send mail, nothing else. If the relay ever fails, Merchforce falls back to its own service address so nothing is lost.</p>' +
     '<textarea id="lsCode" readonly style="width:100%;height:300px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
     '<button class="btn primary" id="lsCopy" style="width:100%;justify-content:center;margin-top:10px">Copy script</button>');
   $('lsCode').value = code;
   $('lsCopy').onclick = function () {
     $('lsCode').select();
     try { navigator.clipboard.writeText(code); } catch (e) { document.execCommand('copy'); }
-    toast('Copied — the supplier pastes this into a new Apps Script project');
+    toast('Copied — paste it into a new Apps Script project');
   };
 }
 
@@ -3032,7 +3104,7 @@ function renderSyncCard(s) {
       (!push && m.write_back ? ' <span class="pill" style="background:var(--ok-soft);color:var(--ok);font-size:10.5px" title="Stock movements in the app are written into this sheet">writes stock back</span>' : '') +
       (!push && m.write_back && m.write_back_last && m.write_back_last.error ? '<br><small style="color:var(--bad)">write-back failed: ' + esc(m.write_back_last.error) + '</small>' : '') + '</td>' +
       '<td style="font-size:12px;color:var(--ink-3)">' +
-        (push ? (mapped ? srcs.length + ' tab' + (srcs.length === 1 ? '' : 's') : 'sheet') + '<br>(private to supplier)'
+        (push ? (mapped ? srcs.length + ' tab' + (srcs.length === 1 ? '' : 's') : 'sheet') + '<br>(stays in your account)'
               : '…' + esc(String(m.sheet).slice(-8))) + '</td>' +
       '<td style="font-size:12.5px">' + (mapped
         ? fieldsTxt
@@ -3040,19 +3112,19 @@ function renderSyncCard(s) {
       '<td style="font-size:12.5px">' + lastTxt + '</td>' +
       '<td style="white-space:nowrap">' +
       (push ? '<button class="btn small" data-conn="' + i + '">Connector</button> '
-            : '<button class="btn small" data-sync="' + i + '">Sync</button> <button class="btn small" data-conn="' + i + '" title="Script for the supplier\'s sheet that pulls stock from Merchforce (for Viewer-only sheets)">Stock connector</button> ') +
+            : '<button class="btn small" data-sync="' + i + '">Sync</button> <button class="btn small" data-conn="' + i + '" title="Script for your sheet that pulls stock from Merchforce (for Viewer-only sheets)">Stock connector</button> ') +
       '<button class="btn ghost small" data-edit="' + i + '">Edit</button> ' +
       '<button class="btn ghost small" data-del="' + i + '" style="color:var(--bad)">✕</button></td></tr>';
   }).join('');
   return section('Sheet sync — per brand',
-      'The supplier keeps managing their catalog in their own Google Sheets, one per brand (like the Wenger stock sheet). ' +
+      'Keep managing stock and prices in your own Google Sheets, one per brand, and Merchforce stays in step with them. ' +
       'Map any sheet column to any product field; a brand mapping only ever touches that brand\'s products.') +
     '<div class="panel2">' +
       (maps.length
         ? '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead><tr>' +
           '<th>Brand</th><th>Sheet</th><th>Mapping</th><th>Last sync</th><th></th>' +
           '</tr></thead><tbody id="yRows">' + rows + '</tbody></table></div>'
-        : '<p class="note">No sheets linked yet. Add the first brand mapping, or generate a ready-made template the supplier can copy and maintain.</p>') +
+        : '<p class="note">No sheets linked yet. Link a sheet you already keep, or let Merchforce create one in its standard format below.</p>') +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
         '<button class="btn primary small" id="yAdd">+ Add brand mapping</button>' +
         (maps.length > 1 ? '<button class="btn small" id="ySyncAll">Sync all now</button>' : '') +
@@ -3066,11 +3138,11 @@ function renderSyncCard(s) {
             '<option value="daily"' + (s.sync_auto === 'daily' ? ' selected' : '') + '>Daily (~6 am)</option>' +
           '</select></label>' +
       '</div>' +
-      '<div class="card-block" style="margin-top:16px"><h3>Standard format for a supplier without a usable sheet</h3>' +
-        '<p class="note-sub" style="margin:-4px 0 12px">Creates a Google Sheet in the Merchforce Drive folder in the Merchforce format (Code · Product Name · HSN · GST % · MRP · Selling Price Excluding GST · Stock · MOQ · Lead Time), one tab per brand, pre-filled from the catalogue, with a How to use tab. ' +
-          'Linked as a pull mapping with write-back on, so the sheet and the console show the same stock from the first day.</p>' +
+      '<div class="card-block" style="margin-top:16px"><h3>Start from a Merchforce stock sheet</h3>' +
+        '<p class="note-sub" style="margin:-4px 0 12px">No usable sheet yet, or one in a format that fights you? Merchforce creates a clean Google Sheet in its standard format (Code · Product Name · HSN · GST % · MRP · Selling Price Excluding GST · Stock · MOQ · Lead Time), one tab per brand, pre-filled from your catalogue, with a How to use tab. ' +
+          'It is linked with write-back on, so the sheet and Merchforce show the same stock from day one.</p>' +
         '<div class="f2">' +
-          '<div class="field"><label>Share with (supplier\'s Google account, optional)</label><input id="yTplEmail" type="email" placeholder="stock@supplier.com"></div>' +
+          '<div class="field"><label>Share with (Google account that will maintain it, optional)</label><input id="yTplEmail" type="email" placeholder="stock@yourcompany.com"></div>' +
           '<div class="field"><label>Brands</label><select id="yTplBrand"><option value="">All brands, one tab each</option>' + A.brands.map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(b.name) + ' only</option>'; }).join('') + '</select></div>' +
         '</div>' +
         '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-bottom:10px"><input type="checkbox" id="yTplLink" checked> Link it now (replaces any existing pull mapping for those brands)</label>' +
@@ -3120,7 +3192,7 @@ function wireSyncCard() {
       $('yTemplate').disabled = false;
       if (res.maps) A.settings.sync_maps = JSON.stringify(res.maps);
       $('yTplOut').innerHTML = 'Ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a>' +
-        (res.shared ? ' · shared with ' + esc(res.shared) + ' as editor' : ' · view-only link; share it with the supplier from Drive') +
+        (res.shared ? ' · shared with ' + esc(res.shared) + ' as editor' : ' · view-only link; share it from Drive with whoever maintains it') +
         (res.linked ? ' · ' + res.linked + ' brand mapping' + (res.linked === 1 ? '' : 's') + ' linked with write-back on.' : '.');
       if (res.linked) toast('Sheet created and linked'); else toast('Sheet created');
       if (res.linked) setTimeout(renderSettings, 1200);
@@ -3192,14 +3264,14 @@ function openMapEditor(m, index) {
   var draft = { sources: JSON.parse(JSON.stringify(mapSourcesOf(m))) };
   if (!draft.sources.length) draft.sources = [{ tab: m.tab || '', sku_col: '', fields: [{ col: '', field: 'on_hand' }] }];
   // What we know about the workbook: pull → after Load sheet; push → after the
-  // supplier's first push. Either way: [{name, headers, sample, rows}].
+  // first push. Either way: [{name, headers, sample, rows}].
   var tabsMeta = m.tabs_meta || (m.headers ? [{ name: m.tab || '', headers: m.headers, sample: m.sample || [], rows: 0 }] : null);
 
   openDrawer(
     '<h2 style="margin:0 0 4px">' + (isNew ? 'Link a brand sheet' : 'Edit mapping') + '</h2>' +
     '<div class="field"><label>How the data moves</label><select id="zMode">' +
-      '<option value="pull"' + (mode === 'pull' ? ' selected' : '') + '>Merchforce reads the sheet — supplier shares it (Viewer)</option>' +
-      '<option value="push"' + (mode === 'push' ? ' selected' : '') + '>The sheet sends to Merchforce — nothing shared, stays private</option>' +
+      '<option value="pull"' + (mode === 'pull' ? ' selected' : '') + '>Merchforce reads your sheet (share it with the Merchforce account)</option>' +
+      '<option value="push"' + (mode === 'push' ? ' selected' : '') + '>Your sheet sends to Merchforce (nothing shared, stays in your account)</option>' +
     '</select></div>' +
     '<p class="note" id="zModeNote" style="margin:-4px 0 14px"></p>' +
     '<div class="field"><label>Brand</label><select id="zBrand">' +
@@ -3219,8 +3291,8 @@ function openMapEditor(m, index) {
     '<label id="zWbWrap" style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-top:10px"' + (mode === 'push' ? ' hidden' : '') + '>' +
       '<input type="checkbox" id="zWriteBack"' + (m.write_back !== false ? ' checked' : '') + '> Write stock back to this sheet' +
     '</label>' +
-    '<p class="note" style="margin:4px 0 0">Every order, dispatch, receipt and manual adjustment in the console updates the Stock column in the sheet, so the sheet never undoes the app\'s movements on the next sync. Needs Editor access to the sheet and a Stock column in the mapping. Not available for push mappings.</p>' +
-    '<p class="note" style="margin:4px 0 0">New products are created hidden (not on the storefront) under this mapping\'s brand, so you can review and publish them from the Catalog tab. Needs a specific brand selected.</p>' +
+    '<p class="note" style="margin:4px 0 0">Every order, dispatch, receipt and manual adjustment in Merchforce updates the Stock column in your sheet, so a sync never undoes those movements. Needs the sheet shared with the Merchforce account as Editor, and a Stock column in the mapping. Not available when the sheet sends to Merchforce.</p>' +
+    '<p class="note" style="margin:4px 0 0">New products are created hidden under this mapping\'s brand, so you can review and publish them from the Catalog tab. Needs a specific brand selected.</p>' +
     '<div class="form-err" id="mErr"></div>' +
     '<button class="btn primary" id="zSave" style="width:100%;justify-content:center;margin-top:10px">Save mapping</button>');
 
@@ -3247,7 +3319,7 @@ function openMapEditor(m, index) {
     var waiting = ($('zMode').value === 'push' && !tabsMeta);
     var html = '';
     if (waiting) {
-      html += '<div class="note2">Save this mapping first and install the connector on the supplier\'s sheet — every tab and column it finds appears here automatically, then you map them. You can also type them now if you already know them.</div>';
+      html += '<div class="note2">Save this mapping first and install the connector on your sheet — every tab and column it finds appears here automatically, then you map them. You can also type them now if you already know them.</div>';
     }
     html += '<label style="font-size:12.5px;font-weight:700;color:var(--ink-2)">Where the data comes from</label>' +
       '<p class="note" style="margin:2px 0 10px">One block per tab. Fields can come from different tabs of the same workbook — they are joined on each tab\'s SKU column.</p>';
@@ -3372,8 +3444,8 @@ function openMapEditor(m, index) {
     $('zPullBox').hidden = push;
     $('zWbWrap').hidden = push;
     $('zModeNote').innerHTML = push
-      ? 'For suppliers who will not share their file. A small connector runs on <b>their</b> sheet and sends only the columns you map here — Merchforce never opens the file. You get the connector script right after saving.'
-      : 'Merchforce opens the sheet directly. The supplier shares it with the backend account: Viewer to read, <b>Editor</b> if stock is to be written back. Viewer only? Turn write-back off and give them the <b>Stock connector</b> from the mapping list instead; it pulls stock into their sheet from their side.';
+      ? 'For a sheet you would rather not share. A small connector runs on <b>your</b> sheet and sends only the columns you map here; Merchforce never opens the file. You get the connector script right after saving.'
+      : 'Merchforce opens the sheet directly. Share it with the Merchforce account: Viewer to read, <b>Editor</b> if stock is to be written back. Prefer Viewer only? Turn write-back off and use the <b>Stock connector</b> from the mapping list instead; it pulls stock into the sheet from your side.';
     $('zSave').textContent = push ? 'Save mapping & get connector' : 'Save mapping & sync now';
     paintMap();
   }
@@ -3437,7 +3509,7 @@ function openMapEditor(m, index) {
   };
 }
 
-/* The push connector: runs on the supplier's own sheet, sends only mapped columns. */
+/* The push connector: runs on the business's own sheet, sends only mapped columns. */
 function connectorCode(m) {
   var push = m.mode === 'push';
   var stockCol = '';
@@ -3546,17 +3618,17 @@ function openPushConnector(m) {
   openDrawer(
     '<h2 style="margin:0 0 4px">Connector for ' + esc(m.brand ? brandNameSafe(m.brand) : 'this sheet') + '</h2>' +
     (push
-      ? '<p class="note" style="margin:0 0 14px">The supplier keeps their file entirely private — this script runs inside <b>their</b> sheet, under their own Google account. It sends only the columns mapped here, and it pulls the app\'s stock figure back into their Stock column, so their sheet stays current without giving Merchforce any access to the file.</p>'
-      : '<p class="note" style="margin:0 0 14px">For a sheet shared with Merchforce as <b>Viewer only</b>. Merchforce reads it as usual; this script, running under the supplier\'s own account, pulls the app\'s stock figure into their Stock column every few minutes and on demand, so the sheet reflects every dispatch and receipt without Merchforce ever being given edit access.</p>') +
+      ? '<p class="note" style="margin:0 0 14px">Your file stays entirely private: this script runs inside <b>your</b> sheet, under your own Google account. It sends only the columns mapped here, and pulls the Merchforce stock figure back into your Stock column, so the sheet stays current without giving Merchforce any access to the file.</p>'
+      : '<p class="note" style="margin:0 0 14px">For a sheet shared with Merchforce as <b>Viewer only</b>. Merchforce reads it as usual; this script, running under your own account, pulls the Merchforce stock figure into your Stock column every few minutes and on demand, so the sheet reflects every dispatch and receipt without Merchforce ever being given edit access.</p>') +
     '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
-      '<li>The supplier opens their sheet → <b>Extensions → Apps Script</b>.</li>' +
-      '<li>They replace whatever is in the editor with the script below and save.</li>' +
-      '<li>Choose the <b>install</b> function, click <b>Run</b>, approve the authorization (their own script, on their own file).</li>' +
-      (push ? '<li>The first run sends every tab\'s column names here — then map them in this console (fields may come from different tabs).</li>' : '') +
+      '<li>Open the sheet → <b>Extensions → Apps Script</b>.</li>' +
+      '<li>Replace whatever is in the editor with the script below and save.</li>' +
+      '<li>Choose the <b>install</b> function, click <b>Run</b>, approve the authorization (your own script, on your own file).</li>' +
+      (push ? '<li>The first run sends every tab\'s column names here — then map them in Merchforce (fields may come from different tabs).</li>' : '') +
       '<li>Reopen the sheet: a <b>Merchforce</b> menu appears with <b>Pull stock now</b>' + (push ? ' and <b>Send this sheet now</b>' : '') + '.</li>' +
     '</ol>' +
     '<p class="note">Stock is pulled every ' + 5 + ' minutes by default (POLL_MINUTES in the script; 1 on a Google Workspace account). Only cells whose value differs are written. ' +
-      (push ? 'Their edits still reach Merchforce on every edit (max once per 30 seconds) plus hourly. ' : '') +
+      (push ? 'Edits in the sheet still reach Merchforce on every edit (max once per 30 seconds) plus hourly. ' : '') +
       'The key below identifies this mapping — treat it like a password. Column names in the script match this mapping: ' + esc((m.sources && m.sources[0] && m.sources[0].sku_col) || m.sku_col || 'Code') + ' for the code and ' +
       esc(((m.sources || []).concat([{ fields: m.fields || [] }]).map(function (s) { return (s.fields || []).filter(function (f) { return f.field === 'on_hand'; }).map(function (f) { return f.col; })[0]; }).filter(String)[0]) || 'Stock') + ' for stock.</p>' +
     '<textarea id="lsCode" readonly style="width:100%;height:300px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
@@ -3565,14 +3637,14 @@ function openPushConnector(m) {
   $('lsCopy').onclick = function () {
     $('lsCode').select();
     try { navigator.clipboard.writeText(code); } catch (e) { document.execCommand('copy'); }
-    toast('Copied — the supplier pastes this into Extensions → Apps Script');
+    toast('Copied — paste it into Extensions → Apps Script on the sheet');
   };
 }
 
-/* Instant (edit-triggered) sync: connector script for the supplier's sheet. */
+/* Instant (edit-triggered) sync: connector script for the stock sheet. */
 function openLiveSyncHelp() {
   var code =
-"/** Merchforce live-sync connector — lives on the supplier's stock sheet. */\n" +
+"/** Merchforce live-sync connector — lives on your stock sheet. */\n" +
 "var MERCHFORCE_URL = '" + CONFIG.API_URL + "';\n" +
 "var MERCHFORCE_TOKEN = '" + CONFIG.API_TOKEN + "';\n" +
 "\n" +
@@ -3593,9 +3665,9 @@ function openLiveSyncHelp() {
 "}";
   openDrawer(
     '<h2 style="margin:0 0 4px">⚡ Instant sync</h2>' +
-    '<p class="note" style="margin:0 0 14px">Google Sheets cannot push changes out by itself, so instant sync works by installing this tiny connector ON the supplier\'s sheet. The moment anyone edits a cell, it pings Merchforce and the mapped fields are pulled within seconds (pings are debounced to one per 45 seconds per sheet).</p>' +
+    '<p class="note" style="margin:0 0 14px">Google Sheets cannot push changes out by itself, so instant sync works by installing this tiny connector on your sheet. The moment anyone edits a cell, it pings Merchforce and the mapped fields are pulled within seconds (pings are debounced to one per 45 seconds per sheet).</p>' +
     '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
-      '<li>Open the supplier\'s stock sheet (anyone with <b>edit</b> access can do this — you or the supplier).</li>' +
+      '<li>Open the stock sheet (anyone with <b>edit</b> access can do this).</li>' +
       '<li>Menu: <b>Extensions → Apps Script</b>.</li>' +
       '<li>Delete whatever is in the editor and paste the script below.</li>' +
       '<li>Save, pick the <b>install</b> function in the toolbar, click <b>Run</b>, and approve the authorization.</li>' +

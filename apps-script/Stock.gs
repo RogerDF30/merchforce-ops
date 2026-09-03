@@ -372,7 +372,7 @@ function sendReorderDigest_(actor) {
   if (!to) return { sent: false, reason: 'notify_email is not set in Settings' };
   var text = reorderDigestText_();
   if (!text) return { sent: false, reason: 'Nothing at or below the reorder point' };
-  var r = sendMail_(to, '[' + APP_NAME + '] Reorder due', text);
+  var r = sendMail_(to, '[' + bizName_() + '] Reorder due', text);
   audit_(actor || 'system', 'reorder_digest', '', to);
   return { sent: true, to: to, via: r && r.via ? r.via : 'backend' };
 }

@@ -74,7 +74,7 @@ function fnAdminMailTest_(p) {
   if (!to) return err_('No address to test — set the notification email first');
   var r = sendMail_(to,
     '[' + (s.site_name || APP_NAME) + '] Test notification',
-    'This is a test from the ' + (s.site_name || APP_NAME) + ' admin console.\n\n' +
+    'This is a test from ' + (s.site_name || APP_NAME) + '.\n\n' +
     'If the sender shown is the supplier\'s own address, the mail relay is working.\n\n' +
     'Sent ' + Utilities.formatDate(now_(), 'Asia/Kolkata', 'd MMM yyyy, h:mm a') + ' IST.',
     { replyTo: p.replyTo || '' });

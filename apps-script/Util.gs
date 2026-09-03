@@ -109,3 +109,8 @@ function isTrue_(v) { return String(v).toUpperCase() === 'TRUE'; }
 
 /** Sheets stores numeric-looking SKUs as numbers — always compare via this key. */
 function skuKey_(v) { return String(v === undefined || v === null ? '' : v).trim().toUpperCase(); }
+
+/** The business using the tool, as printed on emails and documents. */
+function bizName_() { var s = getSettings_(); return String(s.co_name || s.site_name || '').trim() || appName_(); }
+/** What the tool is called in its own UI (Settings → Branding). */
+function appName_() { return String(getSettings_().app_name || '').trim() || 'Merchforce'; }

@@ -481,3 +481,7 @@ a { color: var(--accent); text-decoration: none; }
 .enq-side { position: sticky; top: 16px; }
 @media (max-width: 1000px) { .enq-page { grid-template-columns: 1fr; } .enq-side { position: static; } }
 .ppick.inline { position: static; box-shadow: none; margin: 0 0 12px; max-height: 300px; }
+
+/* branding mark */
+.mark.has-img { background: transparent !important; padding: 0; width: auto; height: 32px; display: inline-flex; align-items: center; }
+.mark.has-img img { height: 32px; max-width: 160px; object-fit: contain; display: block; }

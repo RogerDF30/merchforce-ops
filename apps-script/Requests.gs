@@ -80,7 +80,7 @@ function notifyNewRequest_(id, p, lines, total) {
       lines.map(function (l) { return l.sku + '  ' + l.name + '  x' + l.qty + '  @' + l.price; }).join('\n') +
       '\n\nEstimated total: ' + total + '\nNotes: ' + (p.notes || '-') +
       '\n\nOpen the admin console to review.';
-    sendMail_(to, '[' + (getSettings_().site_name || APP_NAME) + '] New request ' + id + ' — ' + p.company,
+    sendMail_(to, '[' + (getSettings_().site_name || APP_NAME) + '] New enquiry ' + id + ' — ' + p.company,
               body, { replyTo: p.email });
   } catch (e) { audit_('system', 'mail_fail', id, String(e)); }
 }
@@ -124,9 +124,9 @@ function fnAdminRequestAssign_(p) {
   audit_(p.actor || 'admin', 'request_assign', p.id, (was || 'nobody') + ' → ' + (email || 'nobody'));
   if (email && email !== was && email !== String(p.actor_email || '').toLowerCase()) {
     try {
-      sendMail_(email, '[' + APP_NAME + '] ' + req.request_id + ' assigned to you',
+      sendMail_(email, '[' + bizName_() + '] ' + req.request_id + ' assigned to you',
         (p.actor || 'A colleague') + ' assigned enquiry ' + req.request_id + ' (' + req.company + ' · ' + req.status + ') to you for follow-up.\n\n' +
-        'Open the console and look under My enquiries.');
+        'Open ' + appName_() + ' and look under My enquiries.');
     } catch (e) { /* mail is best effort */ }
   }
   return ok_({ id: p.id, assigned_to: email, assigned_name: name });

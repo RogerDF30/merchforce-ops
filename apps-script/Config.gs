@@ -7,7 +7,7 @@
 // One-time bootstrap key. Rotate/blank after running setup (see Setup.gs).
 var SETUP_KEY = '6a9812e575ac88507aa301aab825c322';
 
-var APP_NAME = 'Merchforce Ops';
+var APP_NAME = 'Merchforce';
 
 // Sheet tab schemas. Column order is the contract — append, never reorder.
 var SHEETS = {
@@ -78,6 +78,11 @@ var ACTIVE_END = ['Delivered', 'Closed'];   // everything else open = "active or
 var DEFAULT_SETTINGS = {
   site_name: 'Merchforce',
   tagline: 'Bulk merchandise, direct from stock',
+  // Branding of the tool itself: what the people using it see in the header,
+  // the sign-in screen and the browser tab. Blank logo = the letter mark.
+  app_name: 'Merchforce',
+  app_tagline: 'Enquiries, orders, stock and decks in one place',
+  app_logo_url: '',
   access_mode: 'open',          // open | gated
   show_stock_numbers: 'badge',  // badge | exact
   notify_email: '',             // supplier email for new-request pings

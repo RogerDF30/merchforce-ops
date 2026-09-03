@@ -1,8 +1,12 @@
-# Merchforce Ops
+# Merchforce
 
-Supplier operations backend. Fork of [merchforce](https://github.com/RogerDF30/merchforce)
-with the public storefront removed: the catalogue is the asset, and publishing it
-publishes it to competitors too.
+Order desk for merchandise suppliers: enquiries, quotations, orders, stock, decks
+and accounts, on a Google Sheet and Apps Script backend the business owns.
+Fork of [merchforce](https://github.com/RogerDF30/merchforce) with the public
+storefront removed.
+
+The tool is white-label: Settings → Branding sets the name, tagline and logo the
+team sees; Settings → Company sets the identity printed on documents and emails.
 
 Staff work entirely from the admin console. Enquiries are raised on the customer's
 behalf rather than by the customer browsing a shop, and product information goes
