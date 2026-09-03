@@ -451,3 +451,16 @@ a { color: var(--accent); text-decoration: none; }
   .qty input { width: 60px; }
   .drawer { width: 100%; }
 }
+
+/* product picker with thumbnails */
+.ppick-wrap { position: relative; }
+.ppick { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.14); max-height: 340px; overflow: auto; }
+.ppick-row { display: flex; gap: 10px; align-items: center; padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.ppick-row:last-child { border-bottom: none; }
+.ppick-row:hover, .ppick-row.on { background: var(--accent-soft); }
+.ppick-txt { min-width: 0; display: flex; flex-direction: column; }
+.ppick-txt b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ppick-txt small { color: var(--ink-3); font-size: 12px; }
+.ppick-none { padding: 14px; color: var(--ink-3); font-weight: 600; text-align: center; }
+.pthumb { object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 8px; flex: none; display: inline-block; vertical-align: middle; }
+.pthumb.no-img { background: var(--accent-soft); border-color: transparent; }

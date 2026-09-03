@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v23';
+var BUILD = 'v24';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -879,6 +879,72 @@ function editBrand(b) {
 /* ================= STAFF-RAISED REQUEST ================= */
 
 /** Who is at the keyboard. Remembered per browser until staff accounts exist. */
+/* ---------- product picker: search with thumbnails ---------- */
+function thumb(p, size) {
+  size = size || 40;
+  var src = p && p.images && p.images[0];
+  return src ? '<img class="pthumb" src="' + esc(src) + '" alt="" style="width:' + size + 'px;height:' + size + 'px" loading="lazy">'
+             : '<span class="pthumb no-img" style="width:' + size + 'px;height:' + size + 'px"></span>';
+}
+/**
+ * Turns a text input into a product search. Typing filters by SKU, name, brand or
+ * category; each row shows the image so the right variant is easy to confirm.
+ * Picking writes the SKU into the input and calls onPick(product).
+ */
+function attachProductPicker(input, panel, products, onPick) {
+  var idx = -1, shown = [];
+  function rows() {
+    var q = input.value.trim().toLowerCase();
+    var list = products.filter(function (p) {
+      if (!q) return true;
+      return [p.sku, p.name, brandName(p.brand_id), p.category || ''].join(' ').toLowerCase().indexOf(q) >= 0;
+    });
+    // exact SKU first, then prefix matches, then the rest
+    list.sort(function (a, b) {
+      function rank(p) { var s = p.sku.toLowerCase(), n = p.name.toLowerCase(); return s === q ? 0 : s.indexOf(q) === 0 ? 1 : n.indexOf(q) === 0 ? 2 : 3; }
+      return q ? rank(a) - rank(b) : 0;
+    });
+    return list.slice(0, 40);
+  }
+  function paint() {
+    shown = rows(); idx = -1;
+    panel.innerHTML = shown.length ? shown.map(function (p, i) {
+      var stock = p.atp <= 0 ? '<span class="badge out">out</span>' : '<span style="color:var(--ink-3)">' + qty(p.atp) + ' available</span>';
+      return '<div class="ppick-row" data-i="' + i + '">' + thumb(p, 44) +
+        '<div class="ppick-txt"><b>' + esc(p.name) + '</b><small>' + esc(p.sku) + ' · ' + esc(brandName(p.brand_id) || '') + ' · MOQ ' + p.moq + ' · ' + stock + '</small></div></div>';
+    }).join('') : '<div class="ppick-none">No product matches</div>';
+    panel.hidden = false;
+    panel.querySelectorAll('.ppick-row').forEach(function (r) {
+      r.onmousedown = function (e) { e.preventDefault(); pick(shown[Number(r.dataset.i)]); };
+    });
+  }
+  function pick(p) {
+    if (!p) return;
+    input.value = p.sku; panel.hidden = true;
+    if (onPick) onPick(p);
+  }
+  function move(d) {
+    var items = panel.querySelectorAll('.ppick-row');
+    if (!items.length) return;
+    idx = (idx + d + items.length) % items.length;
+    items.forEach(function (el, i) { el.classList.toggle('on', i === idx); });
+    items[idx].scrollIntoView({ block: 'nearest' });
+  }
+  input.addEventListener('focus', paint);
+  input.addEventListener('input', paint);
+  input.addEventListener('blur', function () { setTimeout(function () { panel.hidden = true; }, 120); });
+  input.addEventListener('keydown', function (e) {
+    if (panel.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { paint(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      var p = idx >= 0 ? shown[idx] : (shown.length === 1 ? shown[0] : shown.filter(function (x) { return x.sku.toLowerCase() === input.value.trim().toLowerCase(); })[0]);
+      if (p) pick(p);
+    } else if (e.key === 'Escape') { panel.hidden = true; e.stopPropagation(); }
+  });
+}
+
 function actorName() {
   try { return localStorage.getItem('mf_actor') || ''; } catch (e) { return ''; }
 }
@@ -934,10 +1000,7 @@ function openNewRequest() {
       '<div class="note-sub">Price is the tier the quantity reaches. Change it later in the quotation builder, not here.</div></div>' +
     '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">' +
       '<div class="field" style="flex:1;margin:0"><label>Product</label>' +
-        '<input id="nSku" list="nSkuList" placeholder="type a SKU or name" autocomplete="off">' +
-        '<datalist id="nSkuList">' + catalogue.map(function (p) {
-          return '<option value="' + esc(p.sku) + '">' + esc(p.name) + ' · MOQ ' + p.moq + ' · ATP ' + qty(p.atp) + '</option>';
-        }).join('') + '</datalist></div>' +
+        '<div class="ppick-wrap"><input id="nSku" placeholder="type a SKU or name" autocomplete="off"><div class="ppick" id="nSkuPick" hidden></div></div></div>' +
       '<div class="field" style="width:110px;margin:0"><label>Qty</label><input id="nQty" type="number" min="1"></div>' +
       '<button class="btn small" id="nAdd" style="height:40px">Add</button>' +
     '</div>' +
@@ -1005,7 +1068,7 @@ function openNewRequest() {
         var stock = !p ? '' : l.qty > p.atp
           ? '<span style="color:var(--bad);font-weight:700">short by ' + qty(l.qty - p.atp) + '</span>'
           : '<span style="color:var(--ink-3)">' + qty(p.atp) + ' available</span>';
-        return '<tr><td><b>' + esc(l.sku) + '</b></td><td>' + esc(p ? p.name : '?') + '</td>' +
+        return '<tr><td>' + thumb(p) + '</td><td><b>' + esc(l.sku) + '</b><br><small style="color:var(--ink-3)">' + esc(p ? p.name : '?') + '</small></td>' +
           '<td class="num"><input type="number" min="1" value="' + l.qty + '" data-i="' + i + '" style="width:80px;text-align:right"></td>' +
           '<td class="num">' + inr(unit) + '</td><td class="num">' + inr(lt) + '</td>' +
           '<td>' + stock + '</td>' +
@@ -1029,10 +1092,10 @@ function openNewRequest() {
   }
   paintLines();
 
-  $('nSku').onchange = function () {
-    var p = findProduct(this.value);
-    if (p && !$('nQty').value) $('nQty').value = p.moq;
-  };
+  attachProductPicker($('nSku'), $('nSkuPick'), catalogue, function (p) {
+    if (!$('nQty').value) $('nQty').value = p.moq;
+    $('nQty').focus();
+  });
   $('nAdd').onclick = function () {
     var p = findProduct($('nSku').value);
     if (!p) { $('mErr').textContent = 'Pick a product from the list.'; return; }
@@ -1134,7 +1197,7 @@ function newDeck() {
 
   openDrawer(
     '<h2 style="margin:0 0 4px">New deck</h2>' +
-    '<p class="note" style="margin:0 0 14px">One page per product: image, specs, MOQ, price tiers and stock as of now. Cover carries the company identity from Settings.</p>' +
+    '<p class="note" style="margin:0 0 14px">Image, specs, MOQ, price tiers and stock as of now, plus an at-a-glance table at the end. Cover carries the company identity; colours and density come from Settings → Deck design.</p>' +
     '<div class="f2">' +
       '<div class="field"><label>Deck name *</label><input id="dName" placeholder="e.g. Drinkware selection — Sept"></div>' +
       '<div class="field"><label>Prepared for</label><input id="dCompany" list="dCompanyList" placeholder="company, optional" autocomplete="off">' +
@@ -2109,7 +2172,7 @@ function renderSettings() {
     '</div>' +
     '<div class="form-err" id="sErr"></div>' +
     '<button class="btn primary" id="sSave" style="margin:14px 0 10px">Save settings</button>' +
-    renderCompanyCard(s) + renderMailCard(s) + renderSyncCard(s);
+    renderCompanyCard(s) + renderDeckCard(s) + renderMailCard(s) + renderSyncCard(s);
 
   $('sSave').onclick = function () {
     $('sSave').disabled = true;
@@ -2125,8 +2188,77 @@ function renderSettings() {
     }).catch(function (e) { $('sErr').textContent = e.message; $('sSave').disabled = false; });
   };
   wireCompanyCard();
+  wireDeckCard();
   wireMailCard();
   wireSyncCard();
+}
+
+/* Deck design: the colours and density every generated PDF and PPTX uses. */
+var DECK_COLORS = [['deck_accent', 'Accent', 'Eyebrows, rules and the cover line', '#2447F5'], ['deck_ink', 'Text', 'Product names and body copy', '#1D1D1F'],
+                   ['deck_muted', 'Muted text', 'SKU, headers, footers, table labels', '#6E6E73'], ['deck_plate', 'Image plate', 'Panel behind each product image', '#F5F5F7']];
+function hexOk(v) { return /^#[0-9a-fA-F]{6}$/.test(String(v || '').trim()); }
+function renderDeckCard(s) {
+  return '<div class="card-block" style="margin-top:18px"><h3>Deck design</h3>' +
+    '<p class="note-sub" style="margin:-4px 0 12px">Applies to every PDF and PowerPoint built from the Decks tab. Decks already built keep their look.</p>' +
+    '<div class="two-col"><div>' +
+      DECK_COLORS.map(function (c) {
+        var v = hexOk(s[c[0]]) ? s[c[0]].toUpperCase() : c[3];
+        return '<div class="field"><label>' + c[1] + ' <small style="font-weight:400;color:var(--ink-3)">· ' + c[2] + '</small></label>' +
+          '<div style="display:flex;gap:8px;align-items:center">' +
+            '<input type="color" id="' + c[0] + '_pick" value="' + v + '" style="width:44px;height:38px;padding:2px;border:1px solid var(--line);border-radius:8px;background:#fff">' +
+            '<input id="' + c[0] + '" value="' + v + '" maxlength="7" style="width:110px;font-family:ui-monospace,monospace"></div></div>';
+      }).join('') +
+      '<div class="field"><label>Layout</label><select id="deck_layout">' +
+        '<option value="compact"' + (s.deck_layout !== 'spacious' ? ' selected' : '') + '>Compact: two products per page and per slide</option>' +
+        '<option value="spacious"' + (s.deck_layout === 'spacious' ? ' selected' : '') + '>Spacious: one product per page and per slide</option></select></div>' +
+      '<div class="form-err" id="dkErr"></div>' +
+      '<button class="btn primary" id="dkSave">Save deck design</button> <button class="btn" id="dkReset">Reset to defaults</button>' +
+    '</div><div><div class="field"><label>Preview</label><div id="dkPrev"></div></div></div></div></div>';
+}
+function wireDeckCard() {
+  function vals() {
+    var o = {};
+    DECK_COLORS.forEach(function (c) { o[c[0]] = $(c[0]).value.trim(); });
+    o.deck_layout = $('deck_layout').value;
+    return o;
+  }
+  function preview() {
+    var v = vals();
+    var col = function (k, i) { return hexOk(v[k]) ? v[k] : DECK_COLORS[i][3]; };
+    var accent = col('deck_accent', 0), ink = col('deck_ink', 1), muted = col('deck_muted', 2), plate = col('deck_plate', 3);
+    var sample = A.products.filter(function (p) { return p.visible && p.images[0]; })[0];
+    $('dkPrev').innerHTML =
+      '<div style="border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:#fff;font-family:Arial,Helvetica,sans-serif;border-top:4px solid ' + accent + '">' +
+        '<div style="display:flex;justify-content:space-between;font-size:9px;font-weight:700;letter-spacing:.08em;color:' + muted + ';border-bottom:1px solid #e5e5ea;padding-bottom:6px;margin-bottom:12px"><span>' + esc((A.settings.co_name || 'YOUR COMPANY').toUpperCase()) + '</span><span style="font-weight:400;letter-spacing:0">Deck name</span></div>' +
+        '<div style="display:flex;gap:14px">' +
+          '<div style="width:92px;height:92px;border-radius:8px;background:' + plate + ';display:flex;align-items:center;justify-content:center;flex:none">' + (sample ? '<img src="' + esc(sample.images[0]) + '" style="max-width:76px;max-height:76px">' : '') + '</div>' +
+          '<div style="min-width:0"><div style="font-size:9px;font-weight:700;letter-spacing:.08em;color:' + accent + '">BRAND · CATEGORY</div>' +
+            '<div style="font-size:17px;font-weight:700;color:' + ink + ';margin:3px 0 2px;line-height:1.1">' + esc(sample ? sample.name : 'Product name') + '</div>' +
+            '<div style="font-size:10px;color:' + muted + ';margin-bottom:8px">' + esc(sample ? sample.sku : 'SKU-0001') + ' · HSN 7323</div>' +
+            '<div style="font-size:11px;font-weight:700;color:' + ink + '">MOQ 25 · GST 18%</div>' +
+            '<div style="font-size:11px;font-weight:700;color:#248a3d;margin-top:6px">In stock · 1,200 available</div></div></div>' +
+        '<table style="border-collapse:collapse;margin-top:12px;width:100%"><tr>' + ['25+ units', '100+ units', '250+ units'].map(function (t) { return '<td style="font-size:9px;color:' + muted + ';border-bottom:1px solid ' + ink + ';padding-bottom:3px">' + t + '</td>'; }).join('') + '</tr>' +
+        '<tr>' + ['₹879', '₹852', '₹824'].map(function (t) { return '<td style="font-size:14px;font-weight:700;color:' + ink + ';padding-top:4px">' + t + '</td>'; }).join('') + '</tr></table>' +
+      '</div>';
+  }
+  DECK_COLORS.forEach(function (c) {
+    $(c[0] + '_pick').oninput = function () { $(c[0]).value = this.value.toUpperCase(); preview(); };
+    $(c[0]).oninput = function () { if (hexOk(this.value)) $(c[0] + '_pick').value = this.value; preview(); };
+  });
+  $('deck_layout').onchange = preview;
+  preview();
+  $('dkReset').onclick = function () {
+    DECK_COLORS.forEach(function (c) { $(c[0]).value = c[3]; $(c[0] + '_pick').value = c[3]; });
+    $('deck_layout').value = 'compact'; preview();
+  };
+  $('dkSave').onclick = function () {
+    var v = vals();
+    var bad = DECK_COLORS.filter(function (c) { return !hexOk(v[c[0]]); });
+    if (bad.length) { $('dkErr').textContent = bad[0][1] + ' must be a six-digit hex colour like #2447F5'; return; }
+    $('dkErr').textContent = ''; $('dkSave').disabled = true;
+    api('adminSettings', { save: v }).then(function (res) { A.settings = res.settings; toast('Deck design saved'); })
+      .catch(function (e) { $('dkErr').textContent = e.message; }).then(function () { $('dkSave').disabled = false; });
+  };
 }
 
 /* The supplier's own identity: printed on every PI and, from phase 4, on every deck. */

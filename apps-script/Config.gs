@@ -85,6 +85,8 @@ var DEFAULT_SETTINGS = {
   co_gstin: '', co_pan: '', co_phone: '', co_email: '',
   co_bank: '', co_terms: '', co_logo_url: '', co_sign_url: '',
   pi_prefix: 'PI', pi_validity_days: '15',
+  // Deck design: colours as #RRGGBB, layout compact (two products per page or slide) | spacious (one)
+  deck_accent: '#2447F5', deck_ink: '#1D1D1F', deck_muted: '#6E6E73', deck_plate: '#F5F5F7', deck_layout: 'compact',
   session_minutes: '30',        // staff sign-in lapses after this much inactivity
   reorder_alert: 'off',         // off | daily: email notify_email when products fall below their reorder point
   site_url: '',   // where order.html lives, for links in emails

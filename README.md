@@ -35,6 +35,12 @@ plan a reorder lands in. Receiving a supply order is the only action here that
 changes on hand, and it writes a StockLog row like every other movement. A daily
 reorder digest can be emailed to the notification address.
 
+## Decks
+
+PDF (A4) and PPTX (16:9) are built server side from the same data. Compact
+layout puts two products on each page and slide; spacious puts one. Both end
+with an at-a-glance table. Colours and layout come from Settings → Deck design.
+
 ## Local development
 
     node tools/mock_api.js     # http://localhost:8900, admin key admin2026

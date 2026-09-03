@@ -23,7 +23,8 @@ const db = {
     access_mode: 'open', show_stock_numbers: 'badge', notify_email: '',
     low_stock_threshold: '25', currency: 'INR', primary_color: '#1a1f36',
     sync_sheet_id: '', sync_tab: '', sync_sku_col: '', sync_stock_col: '', sync_auto: 'off', sync_last: '', sync_maps: '[]',
-    mail_mode: 'backend', mail_from_name: '', relay_url: '', relay_secret: ''
+    mail_mode: 'backend', mail_from_name: '', relay_url: '', relay_secret: '',
+    deck_accent: '#2447F5', deck_ink: '#1D1D1F', deck_muted: '#6E6E73', deck_plate: '#F5F5F7', deck_layout: 'compact', co_name: 'Hourglass Essentials Pvt Ltd'
   },
   brands: seed.brands.map(b => ({ brand_id: b.id, name: b.name, logo_url: '', description: '', active: 'TRUE', sort: b.sort })),
   products: seed.products.map(p => ({
