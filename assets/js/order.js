@@ -5,7 +5,7 @@ var CONFIG = {
   API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
     ? '/api' : 'https://script.google.com/macros/s/AKfycbxrQDSF3on09dWcD9Ct6Buge9k4h0kTZi13NQ_QyF7pGO3IX7ZCrrXGanyuIhYNAl-gyA/exec',
   API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'mf-demo-token' : ''
+    ? 'mf-demo-token' : 'mf_TNzQCuxEw5TWUhwpKW3wt8HtutDJ'
 };
 
 var TOKEN = new URLSearchParams(location.search).get('t') || '';
