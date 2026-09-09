@@ -1,0 +1,5 @@
+/**
+ * Importing this file registers every action. app.ts imports it once; the
+ * dispatcher then resolves actions by name.
+ */
+import './auth.js';

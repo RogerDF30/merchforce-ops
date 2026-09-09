@@ -101,6 +101,17 @@ model Tenant {
   name      String
   plan      String?
   status    TenantStatus @default(active)
+
+  /// The `token` field of the wire contract resolves to a tenant through this.
+  /// Hashed, so a database dump does not hand over every supplier's API token;
+  /// the plaintext is shown once at provisioning. This is what makes the
+  /// single-token Apps Script contract work unchanged across many suppliers.
+  apiTokenHash String @unique @map("api_token_hash")
+
+  /// Master recovery key, bcrypt. The equivalent of ADMIN_PASS -- used to
+  /// create the first staff account and to get back in when nobody can.
+  masterKeyHash String? @map("master_key_hash")
+
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
 

@@ -12,10 +12,10 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts",
-    "dev": "tsx watch src/server.ts",
+    "db:seed": "tsx --env-file=../../.env prisma/seed.ts",
+    "dev": "tsx watch --env-file=../../.env src/server.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
-    "start": "node dist/server.js",
+    "start": "node --env-file=../../.env dist/server.js",
     "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" --max-warnings 0",
     "test": "vitest run"
