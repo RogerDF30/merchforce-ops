@@ -4,3 +4,4 @@
  */
 import './auth.js';
 import './catalog.js';
+import './accounts.js';

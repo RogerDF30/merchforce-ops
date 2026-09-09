@@ -14,9 +14,19 @@ import { env } from '../env.js';
  * the S3 API, so this is the only file that would change if the bucket moved
  * to AWS.
  *
- * Keys are always tenant-prefixed: `t/<tenantId>/<kind>/<uuid><ext>`. That
- * makes a tenant's objects a single prefix to export, audit or delete, and it
- * means a leaked key from one supplier cannot be confused for another's.
+ * Keys are `<visibility>/t/<tenantId>/<kind>/<uuid><ext>`.
+ *
+ * Visibility leads, because it is the only shape a bucket policy can actually
+ * enforce. Product images must be anonymously readable (they are embedded in
+ * emailed PDFs, where a presigned URL would expire), while account documents,
+ * PIs and POs must not be. A layout of `t/<tenantId>/<kind>/...` cannot express
+ * that: granting anonymous read needs a literal prefix, and a per-tenant
+ * images path would need a wildcard in the middle of one. Grouping by
+ * visibility first makes the policy exactly two rules -- everything under
+ * `public/` is readable, everything else is not.
+ *
+ * The tenant id still follows, so one supplier's objects remain a single prefix
+ * to export, audit or delete.
  */
 export const s3 = new S3Client({
   region: env.S3_REGION,
@@ -29,6 +39,16 @@ export const s3 = new S3Client({
 });
 
 export type ObjectKind = 'images' | 'accounts' | 'pi' | 'po' | 'decks' | 'exports';
+
+/**
+ * Which kinds are anonymously readable. Only product imagery: everything else
+ * is a customer document and is served through a short-lived presigned URL.
+ */
+const PUBLIC_KINDS: ReadonlySet<ObjectKind> = new Set<ObjectKind>(['images']);
+
+export function isPublicKind(kind: ObjectKind): boolean {
+  return PUBLIC_KINDS.has(kind);
+}
 
 /** Anything not on this list is stored but never served inline. */
 const INLINE_SAFE = new Set([
@@ -45,7 +65,8 @@ export function buildKey(
   filename: string,
 ): string {
   const ext = extname(filename).toLowerCase().slice(0, 12);
-  return `t/${tenantId}/${kind}/${randomUUID()}${ext}`;
+  const scope = isPublicKind(kind) ? 'public' : 'private';
+  return `${scope}/t/${tenantId}/${kind}/${randomUUID()}${ext}`;
 }
 
 export async function putObject(opts: {
@@ -108,7 +129,10 @@ export async function deleteObject(key: string): Promise<void> {
  * name another tenant's prefix and read their files through our credentials.
  */
 export function assertKeyBelongsTo(tenantId: string, key: string): void {
-  if (!key.startsWith(`t/${tenantId}/`)) {
+  if (
+    !key.startsWith(`public/t/${tenantId}/`) &&
+    !key.startsWith(`private/t/${tenantId}/`)
+  ) {
     throw new Error('Object key does not belong to this tenant');
   }
 }
