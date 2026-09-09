@@ -3,3 +3,4 @@
  * dispatcher then resolves actions by name.
  */
 import './auth.js';
+import './catalog.js';
