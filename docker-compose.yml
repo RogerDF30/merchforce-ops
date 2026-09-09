@@ -1,0 +1,46 @@
+# Local mirror of production: Postgres (Neon in prod), Redis, and MinIO
+# standing in for Cloudflare R2. MinIO speaks the S3 API, so the same
+# @aws-sdk/client-s3 code path runs locally and in production.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: merchforce
+      POSTGRES_PASSWORD: merchforce
+      POSTGRES_DB: merchforce
+    ports: ["5432:5432"]
+    volumes: [mf_pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U merchforce -d merchforce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes: [mf_redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: merchforce
+      MINIO_ROOT_PASSWORD: merchforce123
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [mf_minio:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mf_pg:
+  mf_redis:
+  mf_minio:

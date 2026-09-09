@@ -1,0 +1,665 @@
+// Merchforce — multi-tenant supplier operations platform.
+//
+// Tenancy: a Tenant is a SUPPLIER BUSINESS running its own order desk. Every
+// table below carries tenantId, and no query may omit it. That is enforced in
+// two places, deliberately belt-and-braces:
+//   1. a Prisma client extension that injects tenantId into every where/create
+//   2. Postgres row-level security keyed on the session GUC app.tenant_id
+// A bug in (1) alone therefore cannot leak another supplier's data.
+//
+// Derived from the Sheets schema in apps-script/Config.gs. Column order there
+// was the contract; here names are camelCase and @map holds the wire name so
+// the existing {token, action} JSON contract keeps working unchanged.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../apps/api/src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Runtime: the unprivileged role, subject to the RLS policies below.
+  url       = env("DATABASE_URL")
+  // Migrations and introspection: the owner, which runs DDL. Prisma uses
+  // directUrl for those, so migrate never touches the app credential.
+  directUrl = env("MIGRATE_DATABASE_URL")
+}
+
+enum TenantStatus {
+  active
+  suspended
+  cancelled
+}
+
+enum UserRole {
+  admin
+  staff
+}
+
+/// Forward-only enquiry → order lifecycle. Rejected/Declined/Expired/Cancelled
+/// are terminal branches. Stock is never moved by status alone — see
+/// Request.stockState, which is what actually reserves and deducts.
+enum RequestStatus {
+  New
+  Accepted
+  PiSent        @map("PI Sent")
+  PiAccepted    @map("PI Accepted")
+  PoReceived    @map("PO Received")
+  InProduction  @map("In Production")
+  Dispatched
+  Delivered
+  Closed
+  Rejected
+  Declined
+  Expired
+  Cancelled
+}
+
+/// none → reserved (at PI Accepted, ATP drops) → deducted (at PO Received,
+/// on hand actually falls). A terminal status releases a reservation that was
+/// never deducted.
+enum StockState {
+  none
+  reserved
+  deducted
+}
+
+enum SupplyKind {
+  make
+  buy
+}
+
+enum SupplyStatus {
+  planned
+  ordered
+  partial
+  received
+  cancelled
+}
+
+enum ShipmentStatus {
+  pending
+  dispatched
+  delivered
+  cancelled
+}
+
+/// make = produced in house (lands in the Production plan)
+/// buy  = bought from a vendor (lands in the Purchases plan)
+enum SupplyMode {
+  make
+  buy
+}
+
+// ---------------------------------------------------------------------------
+// Tenant + configuration
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id        String       @id @default(uuid())
+  slug      String       @unique
+  name      String
+  plan      String?
+  status    TenantStatus @default(active)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  settings      Setting[]
+  users         User[]
+  brands        Brand[]
+  products      Product[]
+  priceTiers    PriceTier[]
+  companies     Company[]
+  contacts      Contact[]
+  accountNotes  AccountNote[]
+  accountFiles  AccountFile[]
+  requests      Request[]
+  requestLines  RequestLine[]
+  shipments     Shipment[]
+  supplyOrders  SupplyOrder[]
+  decks         Deck[]
+  stockLogs     StockLog[]
+  auditLogs     AuditLog[]
+  events        Event[]
+  syncMaps      SyncMap[]
+  refreshTokens RefreshToken[]
+
+  @@map("tenants")
+}
+
+/// Key/value, exactly as the Settings tab was. Kept as rows rather than a JSON
+/// column so adminSettings stays a straight read/write and new keys need no
+/// migration. Valid keys and their shapes are validated by zod at the edge.
+model Setting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  key      String
+  value    String @db.Text
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@map("settings")
+}
+
+// ---------------------------------------------------------------------------
+// Staff auth
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String    @id @default(uuid())
+  tenantId  String    @map("tenant_id")
+  email     String
+  name      String
+  passHash  String    @map("pass_hash")
+  role      UserRole  @default(staff)
+  active    Boolean   @default(true)
+  lastLogin DateTime? @map("last_login")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshTokens    RefreshToken[]
+  ownedCompanies   Company[]      @relation("CompanyOwner")
+  assignedRequests Request[]      @relation("RequestOwner")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tenantId  String    @map("tenant_id")
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue
+// ---------------------------------------------------------------------------
+
+model Brand {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  code        String
+  name        String
+  logoUrl     String?  @map("logo_url")
+  description String?  @db.Text
+  active      Boolean  @default(true)
+  sort        Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products Product[]
+  syncMaps SyncMap[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("brands")
+}
+
+model Product {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  sku         String
+  name        String
+  brandId     String? @map("brand_id")
+  category    String?
+  subcategory String?
+  description String? @db.Text
+
+  /// Was a '|'-joined string in the sheet; a real array here.
+  specs     String[] @default([])
+  imageKeys String[] @default([]) @map("image_keys")
+
+  moq      Int     @default(1)
+  gstRate  Decimal @default(18) @map("gst_rate") @db.Decimal(5, 2)
+  /// Text, never a number: Sheets silently ate the leading zero on codes like 0902.
+  hsn      String?
+  mrp      Decimal? @db.Decimal(12, 2)
+  leadTime Int?     @map("lead_time")
+
+  onHand       Int @default(0) @map("on_hand")
+  reserved     Int @default(0)
+  safetyStock  Int @default(0) @map("safety_stock")
+  reorderPoint Int @default(0) @map("reorder_point")
+
+  visible   Boolean @default(true)
+  showPrice Boolean @default(true) @map("show_price")
+
+  supplyMode SupplyMode? @map("supply_mode")
+  vendor     String?
+  vendorMoq  Int?        @map("vendor_moq")
+  batchQty   Int?        @map("batch_qty")
+
+  /// The on-hand last read from the supplier's own sheet, for change detection.
+  syncSeen Int? @map("sync_seen")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brand        Brand?        @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  priceTiers   PriceTier[]
+  requestLines RequestLine[]
+  supplyOrders SupplyOrder[]
+  stockLogs    StockLog[]
+  events       Event[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, visible])
+  @@index([tenantId, brandId])
+  @@map("products")
+}
+
+model PriceTier {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  productId String  @map("product_id")
+  minQty    Int     @map("min_qty")
+  unitPrice Decimal @map("unit_price") @db.Decimal(12, 2)
+  gst       Decimal? @db.Decimal(5, 2)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, minQty])
+  @@index([tenantId])
+  @@map("price_tiers")
+}
+
+// ---------------------------------------------------------------------------
+// Accounts (the supplier's customers)
+// ---------------------------------------------------------------------------
+
+model Company {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  name     String
+  gstin    String?
+  phone    String?
+  email    String?
+
+  billLine1   String? @map("bill_line1")
+  billLine2   String? @map("bill_line2")
+  billCity    String? @map("bill_city")
+  billState   String? @map("bill_state")
+  billPin     String? @map("bill_pin")
+  billCountry String? @default("India") @map("bill_country")
+
+  shipSame    Boolean @default(true) @map("ship_same")
+  shipLine1   String? @map("ship_line1")
+  shipLine2   String? @map("ship_line2")
+  shipCity    String? @map("ship_city")
+  shipState   String? @map("ship_state")
+  shipPin     String? @map("ship_pin")
+  shipCountry String? @default("India") @map("ship_country")
+
+  /// Place of supply for GST. Derived from billState but stored, because a
+  /// historical PI must keep the code that was actually printed on it.
+  stateCode String? @map("state_code")
+
+  ownerId String? @map("owner_id")
+  notes   String? @db.Text
+  active  Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  owner        User?         @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  contacts     Contact[]
+  accountNotes AccountNote[]
+  accountFiles AccountFile[]
+  requests     Request[]
+  decks        Deck[]
+
+  @@index([tenantId, active])
+  @@index([tenantId, name])
+  @@map("companies")
+}
+
+model Contact {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  companyId String  @map("company_id")
+  name      String
+  email     String?
+  phone     String?
+  role      String?
+
+  consent       Boolean   @default(false)
+  consentTs     DateTime? @map("consent_ts")
+  consentSource String?   @map("consent_source")
+  unsubscribed  Boolean   @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, companyId])
+  @@map("contacts")
+}
+
+model AccountNote {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  companyId String   @map("company_id")
+  author    String
+  text      String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, companyId])
+  @@map("account_notes")
+}
+
+/// Was a Drive file in a per-account folder. Now an object in R2: `key` is the
+/// bucket path, and the browser gets a short-lived presigned URL on demand
+/// rather than a permanent link.
+model AccountFile {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  companyId  String   @map("company_id")
+  name       String
+  key        String
+  mime       String?
+  size       Int?
+  uploadedBy String?  @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, companyId])
+  @@map("account_files")
+}
+
+// ---------------------------------------------------------------------------
+// Enquiries and orders
+// ---------------------------------------------------------------------------
+
+model Request {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  /// Human reference, e.g. MF-2026-0001. Unique per tenant, not globally.
+  ref      String
+
+  status     RequestStatus @default(New)
+  stockState StockState    @default(none) @map("stock_state")
+
+  companyId String? @map("company_id")
+  /// Denormalised contact details as captured at enquiry time. A later edit to
+  /// the account must not silently rewrite what an issued PI was addressed to.
+  company   String?
+  contact   String?
+  email     String?
+  phone     String?
+  gstin     String?
+
+  notes      String? @db.Text
+  adminNotes String? @db.Text
+  totalEst   Decimal @default(0) @map("total_est") @db.Decimal(14, 2)
+
+  /// { "New": "2026-09-01T...", "Accepted": "..." } — when each stage was entered.
+  statusDates Json @default("{}") @map("status_dates")
+
+  /// 28-char bearer for the customer's own order page. The only auth on
+  /// order.html, so it is unique across all tenants, not just within one.
+  token String @unique
+
+  piNumber    String?   @map("pi_number")
+  piKey       String?   @map("pi_key")
+  piTotal     Decimal?  @map("pi_total") @db.Decimal(14, 2)
+  piValidTill DateTime? @map("pi_valid_till")
+
+  poNumber String? @map("po_number")
+  poKey    String? @map("po_key")
+
+  shipAddress   String? @map("ship_address") @db.Text
+  placeOfSupply String? @map("place_of_supply")
+
+  raisedBy   String? @map("raised_by")
+  assignedId String? @map("assigned_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyRef Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  assignee  User?         @relation("RequestOwner", fields: [assignedId], references: [id], onDelete: SetNull)
+  lines     RequestLine[]
+  shipments Shipment[]
+
+  @@unique([tenantId, ref])
+  @@index([tenantId, status])
+  @@index([tenantId, companyId])
+  @@index([tenantId, assignedId])
+  @@map("requests")
+}
+
+model RequestLine {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  requestId String @map("request_id")
+  line      Int
+
+  productId String? @map("product_id")
+  /// SKU and name are copied, not joined, for the same reason as the contact
+  /// details above: a renamed product must not rewrite an issued document.
+  sku       String
+  name      String
+
+  qty       Int
+  unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
+  listPrice Decimal? @map("list_price") @db.Decimal(12, 2)
+  lineTotal Decimal  @map("line_total") @db.Decimal(14, 2)
+  gst       Decimal? @db.Decimal(5, 2)
+  hsn       String?
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  request Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([requestId, line])
+  @@index([tenantId])
+  @@map("request_lines")
+}
+
+model Shipment {
+  id         String         @id @default(uuid())
+  tenantId   String         @map("tenant_id")
+  requestId  String         @map("request_id")
+  shipmentNo Int            @map("shipment_no")
+  shipDate   DateTime?      @map("ship_date")
+  carrier    String?
+  tracking   String?
+  qty        Int            @default(0)
+  note       String?        @db.Text
+  status     ShipmentStatus @default(pending)
+  deliveredOn DateTime?     @map("delivered_on")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, shipmentNo])
+  @@index([tenantId, status])
+  @@map("shipments")
+}
+
+// ---------------------------------------------------------------------------
+// Supply, stock and decks
+// ---------------------------------------------------------------------------
+
+/// A production run (kind=make) or a vendor purchase order (kind=buy).
+/// Receiving one is the only action in the Stock tab that changes on hand,
+/// and it writes a StockLog row like every other movement.
+model SupplyOrder {
+  id        String       @id @default(uuid())
+  tenantId  String       @map("tenant_id")
+  ref       String
+  kind      SupplyKind
+  productId String       @map("product_id")
+  /// Copied at creation so a receipt still reads correctly if the SKU is renamed.
+  sku       String
+  name      String
+  qty       Int
+  vendor    String?
+  status    SupplyStatus @default(planned)
+  expected  DateTime?
+  externalRef String?    @map("external_ref")
+  note      String?      @db.Text
+
+  receivedQty Int       @default(0) @map("received_qty")
+  receivedAt  DateTime? @map("received_at")
+
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, ref])
+  @@index([tenantId, status])
+  @@index([tenantId, kind])
+  @@map("supply_orders")
+}
+
+/// Append-only ledger. Every movement of on-hand goes through here, and
+/// Product.onHand is the running total — never written directly.
+model StockLog {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  productId String   @map("product_id")
+  sku       String
+  delta     Int
+  reason    String
+  actor     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, productId, createdAt])
+  @@map("stock_logs")
+}
+
+model Deck {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  /// SKUs as captured. A deck is a snapshot of what was sent, so it does not
+  /// re-resolve to products that may since have changed or been deleted.
+  skus      String[] @default([])
+  companyId String?  @map("company_id")
+  company   String?
+
+  pdfKey  String? @map("pdf_key")
+  pptxKey String? @map("pptx_key")
+
+  createdBy String?   @map("created_by")
+  sentTo    String?   @map("sent_to")
+  lastSent  DateTime? @map("last_sent")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyRef Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@map("decks")
+}
+
+// ---------------------------------------------------------------------------
+// Sheet sync, analytics, audit
+// ---------------------------------------------------------------------------
+
+/// The supplier keeps managing stock in their OWN Google Sheet and a small
+/// connector script pushes it here. Was the sync_maps JSON blob in Settings;
+/// a real table now, because pushKey is a credential and needs its own row,
+/// its own index and its own rotation.
+model SyncMap {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  brandId  String? @map("brand_id")
+  label    String?
+
+  sheetId  String? @map("sheet_id")
+  tab      String?
+  skuCol   String? @map("sku_col")
+  stockCol String? @map("stock_col")
+
+  /// Bearer for the supplier's connector. Hashed: the plaintext is shown once,
+  /// when the connector is generated, and never stored.
+  pushKeyHash String  @unique @map("push_key_hash")
+  /// Shape of their workbook as last pushed, so the mapping UI can offer every
+  /// tab and column without anyone here opening the file.
+  tabsMeta    Json?   @map("tabs_meta")
+
+  lastRunAt  DateTime? @map("last_run_at")
+  lastResult Json?     @map("last_result")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brand  Brand? @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@map("sync_maps")
+}
+
+/// Daily per-SKU counters behind the Analytics tab.
+model Event {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  day       DateTime @db.Date
+  productId String?  @map("product_id")
+  sku       String?
+  type      String
+  count     Int      @default(0)
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, day, sku, type])
+  @@index([tenantId, day])
+  @@map("events")
+}
+
+/// Append-only. actor is always resolved from the verified session server side,
+/// never from anything the client claims.
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  actor     String
+  action    String
+  ref       String?
+  detail    String?  @db.Text
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action])
+  @@map("audit_logs")
+}

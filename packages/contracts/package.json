@@ -1,0 +1,20 @@
+{
+  "name": "@merchforce/contracts",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared Prisma schema and zod action contracts",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "prisma": { "schema": "prisma/schema.prisma" },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "zod": "^3.23.8" },
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "prisma": "^5.22.0",
+    "typescript": "^5.6.3"
+  }
+}
