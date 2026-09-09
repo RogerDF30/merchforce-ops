@@ -6,3 +6,4 @@ import './auth.js';
 import './catalog.js';
 import './accounts.js';
 import './requests.js';
+import './stock.js';
