@@ -9,3 +9,5 @@ import './requests.js';
 import './stock.js';
 import './documents.js';
 import './decks.js';
+import './analytics.js';
+import './utility.js';
