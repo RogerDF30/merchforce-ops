@@ -15,3 +15,6 @@ ruvector.db
 
 # A deployment writes this; it must never be committed.
 assets/js/config.js
+
+# Operational notes that name live credentials stay out of the repo.
+ROTATE.md
