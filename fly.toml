@@ -1,0 +1,52 @@
+# Fly.io — Merchforce API
+#
+# Mumbai, because the suppliers and their customers are in India and every
+# request here is a database round trip; Neon should be in the same region.
+
+app = "merchforce-api"
+primary_region = "bom"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Migrations run once per deploy, before any new machine takes traffic, and as
+# the OWNER role -- the app's own role has no DDL rights on purpose.
+[deploy]
+  release_command = "pnpm --filter @merchforce/contracts exec prisma migrate deploy"
+  strategy = "rolling"
+
+[env]
+  PORT = "8901"
+  NODE_ENV = "production"
+  S3_REGION = "auto"
+  S3_FORCE_PATH_STYLE = "true"
+
+[http_service]
+  internal_port = 8901
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # One machine always warm: a cold start pays for a Chromium launch on the
+  # first proforma of the day.
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    # Deck and proforma rendering is CPU-bound and holds a browser context, so
+    # a machine should not accept a crowd it will only queue.
+    soft_limit = 20
+    hard_limit = 40
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  # /health touches the database; / would report a process that cannot serve.
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  # Chromium needs headroom. 512MB renders a one-product deck and dies on a
+  # forty-product one.
+  memory = "2gb"

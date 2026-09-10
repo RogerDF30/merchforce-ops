@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+apps/api/src/generated
+.git
+.env
+.env.*
+!.env.example
+.claude
+ruvector.db
+*.db
+apps-script
+tools/mock_api.js
+assets
+*.html

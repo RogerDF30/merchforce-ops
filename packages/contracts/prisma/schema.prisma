@@ -14,6 +14,11 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../../../apps/api/src/generated/prisma"
+  // Declared, not detected. Prisma picks a query engine from the OpenSSL it
+  // finds at GENERATE time, which is the build stage -- and the image is built
+  // on arm64 here but runs on x86_64 in production. Getting it wrong is a crash
+  // on the first query, long after the build went green.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
