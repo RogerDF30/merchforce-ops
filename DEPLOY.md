@@ -129,21 +129,27 @@ SELECT count(*) FROM users WHERE password_legacy;
 
 ## 7. Console — GitHub Pages
 
-Point the frontend at the API. In `assets/js/admin.js` and `assets/js/order.js`,
-`CONFIG.API_URL` still names the Apps Script `/exec` URL for non-localhost:
+Merge `console-cutover` into `main`. Pages republishes and the console is on the
+new API.
+
+There is no credential to set. The console names its supplier with a **public
+slug** and authorises nothing with it:
 
 ```js
-API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? '/api' : 'https://merchforce-api.fly.dev',
-API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? 'mf-demo-token' : '<that tenant's API token>'
+TENANT: fromQuery || window.MF_TENANT || fromHost || ''
 ```
 
-That is the whole cutover: the protocol is unchanged, so nothing else moves.
+so `?tenant=acme`, or `acme.merchforce.app`, or a one-line `MF_TENANT` in an
+untracked `assets/js/config.js`. One build serves every supplier.
 
-> The API token is a per-tenant secret and this repo is public. One console
-> build serves one supplier; a second supplier needs its own deployment, or the
-> token must move out of the bundle and into a sign-in step.
+That is deliberate rather than lax. A token that ships in a JavaScript bundle
+is readable by anyone who opens the file — this repository shipped a real one
+for a week (see `ROTATE.md`). Every admin action needs a staff session,
+signing in is bcrypt behind a per-IP and per-account rate limit, and a
+customer's order page is authorised by that order's own token. The slug decides
+*which* supplier is being asked about, nothing more.
+
+`window.MF_API_URL` overrides the API origin the same way, for a staging deploy.
 
 ## 8. After cutover
 

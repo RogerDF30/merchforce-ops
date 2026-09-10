@@ -12,3 +12,6 @@ apps/api/src/generated/
 ruvector.db
 *.db
 .claude/
+
+# A deployment writes this; it must never be committed.
+assets/js/config.js

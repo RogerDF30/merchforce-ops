@@ -68,18 +68,39 @@ async function handle(req: Request, res: Response): Promise<void> {
 
   const ip = req.ip ?? '';
 
-  // 1. The API token resolves which supplier this call is for. Every tenant
-  //    has its own, so possessing one token reaches exactly one tenant.
+  // 1. Which supplier is this call for?
+  //
+  //    Two ways, and the difference matters. `tenant` is a public slug, which
+  //    is what a browser console sends: it ships in a JavaScript bundle anyone
+  //    can read, so treating it as a secret was always theatre -- the previous
+  //    build shipped a real API token in admin.js and it sat in a public repo
+  //    for a week. Naming it for what it is stops anyone mistaking it for
+  //    protection. Nothing is authorised by it; every admin action still needs
+  //    a staff session, and staffLogin is bcrypt behind a rate limit.
+  //
+  //    `token` stays for server-to-server callers, where a secret can actually
+  //    be kept. It is hashed at rest and reaches exactly one tenant.
+  const slug = String(body.tenant ?? '').trim().toLowerCase();
   const token = String(body.token ?? '');
-  if (!token) {
-    res.json({ ok: false, error: 'Bad token' });
+
+  if (!slug && !token) {
+    res.json({ ok: false, error: 'No tenant specified' });
     return;
   }
-  const tenant = await prisma.tenant.findUnique({
-    where: { apiTokenHash: hashToken(token) },
-    select: { id: true, status: true, masterKeyHash: true },
-  });
+
+  const tenant = slug
+    ? await prisma.tenant.findUnique({
+        where: { slug },
+        select: { id: true, status: true, masterKeyHash: true },
+      })
+    : await prisma.tenant.findUnique({
+        where: { apiTokenHash: hashToken(token) },
+        select: { id: true, status: true, masterKeyHash: true },
+      });
+
   if (!tenant) {
+    // Deliberately identical either way: a wrong slug and a wrong token should
+    // not be distinguishable, or the reply becomes a way to enumerate tenants.
     res.json({ ok: false, error: 'Bad token' });
     return;
   }

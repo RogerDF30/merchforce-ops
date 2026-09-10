@@ -1,12 +1,35 @@
-/* Merchforce — the client's own order page, opened from the link in their email. */
+/* Merchforce console */
 'use strict';
 
-var CONFIG = {
-  API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? '/api' : 'https://script.google.com/macros/s/AKfycbxrQDSF3on09dWcD9Ct6Buge9k4h0kTZi13NQ_QyF7pGO3IX7ZCrrXGanyuIhYNAl-gyA/exec',
-  API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'mf-demo-token' : 'mf_TNzQCuxEw5TWUhwpKW3wt8HtutDJ'
-};
+/**
+ * Where the API is, and which supplier this console is for.
+ *
+ * There is deliberately NO secret here. An earlier build put the backend's API
+ * token in this file; the repository is public, so it was readable by anyone
+ * for as long as it sat there. A token that ships in a JavaScript bundle is not
+ * a token, and treating it as one only hides that nothing was being protected.
+ *
+ * The tenant slug below is public on purpose. It names which supplier's data
+ * this console is asking about; it authorises nothing. Every admin action needs
+ * a staff session, and signing in is bcrypt behind a per-IP and per-account rate
+ * limit. A customer's order page is authorised by that order's own token.
+ *
+ * The slug comes from, in order: ?tenant= in the URL, then the first label of
+ * the hostname (acme.merchforce.app -> acme), then MF_TENANT if a deployment
+ * sets one in a small config script. So one build serves every supplier.
+ */
+var CONFIG = (function () {
+  var local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  var host = location.hostname.split('.')[0];
+  var fromQuery = new URLSearchParams(location.search).get('tenant');
+  var fromHost = /^(www|localhost|127)$/.test(host) ? '' : host;
+  return {
+    API_URL: local ? '/api' : (window.MF_API_URL || 'https://merchforce-api.fly.dev'),
+    TENANT: local
+      ? (fromQuery || 'demo')
+      : (fromQuery || window.MF_TENANT || fromHost || '')
+  };
+})();
 
 var TOKEN = new URLSearchParams(location.search).get('t') || '';
 var O = null;
@@ -27,7 +50,7 @@ function toast(msg) {
 function api(action, body) {
   body = body || {};
   body.action = action;
-  body.token = CONFIG.API_TOKEN;   // site key
+  body.tenant = CONFIG.TENANT;   // site key
   body.t = body.t || TOKEN;        // this order's own key
   return fetch(CONFIG.API_URL, {
     method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
