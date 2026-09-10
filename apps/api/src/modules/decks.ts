@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ActionError, defineAction, type ActionContext } from '../lib/dispatch.js';
 import { audit } from '../lib/audit.js';
 import { getSettings } from '../lib/settings.js';
+import { sendMail } from '../lib/mail.js';
 import { buildKey, deleteObject, presignGet, putObject } from '../lib/storage.js';
 import { htmlToPdf } from '../lib/pdf.js';
 import { deckHtml, type DeckProduct } from '../lib/deck.js';
@@ -178,23 +179,44 @@ defineAction('adminDeckSend', {
     const pdfUrl = d.pdfKey ? await presignGet(d.pdfKey, 7 * 24 * 3600) : '';
     const pptxUrl = d.pptxKey ? await presignGet(d.pptxKey, 7 * 24 * 3600) : '';
 
-    await ctx.db.deck.update({
-      where: { id: d.id },
-      data: {
-        sentTo: d.sentTo ? `${d.sentTo}, ${input.to}` : input.to,
-        lastSent: new Date(),
-      },
-    });
-    await audit(ctx, 'deck_send', d.id, input.to);
+    const settings = await getSettings(ctx.db, ctx.tenantId);
+    const coName = settings.co_name || settings.site_name || 'Merchforce';
 
-    // Reports honestly rather than claiming a send: the mail provider is wired
-    // in the mail phase.
+    const res = await sendMail(ctx.db, ctx.tenantId, {
+      to: input.to,
+      subject: `[${coName}] ${d.name}`,
+      text:
+        (input.message ? `${input.message.trim()}\n\n` : '') +
+        `Product deck: ${d.name}\n` +
+        (pdfUrl ? `PDF: ${pdfUrl}\n` : '') +
+        (pptxUrl ? `PowerPoint: ${pptxUrl}\n` : '') +
+        `\nPrices are in INR, exclusive of GST. Stock is as at the date on the deck.\n` +
+        `These links expire in a week.\n\n` +
+        coName +
+        (settings.co_phone ? ` · ${settings.co_phone}` : '') +
+        (settings.co_email ? ` · ${settings.co_email}` : ''),
+      ...(settings.co_email ? { replyTo: settings.co_email } : {}),
+    });
+
+    // The record of who it went to is only written on a successful send --
+    // otherwise the deck would claim a recipient who never received it.
+    if (res.ok) {
+      await ctx.db.deck.update({
+        where: { id: d.id },
+        data: {
+          sentTo: d.sentTo ? `${d.sentTo}, ${input.to}` : input.to,
+          lastSent: new Date(),
+        },
+      });
+    }
+    await audit(ctx, 'deck_send', d.id, res.ok ? input.to : `failed: ${res.error}`);
+
     return {
-      sent: false,
+      sent: res.ok,
       to: input.to,
       pdf_url: pdfUrl,
       pptx_url: pptxUrl,
-      pending: 'mail provider not yet configured',
+      ...(res.error ? { error: res.error } : {}),
     };
   },
 });

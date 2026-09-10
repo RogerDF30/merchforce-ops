@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { defineAction, type ActionContext } from '../lib/dispatch.js';
+import { ActionError, defineAction, type ActionContext } from '../lib/dispatch.js';
 import { audit } from '../lib/audit.js';
-import { getSettings , displayStamp } from '../lib/settings.js';
+import { getSettings, displayStamp } from '../lib/settings.js';
+import { sendMail } from '../lib/mail.js';
 import { WIRE_STATUS } from '../lib/orderState.js';
 
 const DAY_MS = 86_400_000;
@@ -341,13 +342,20 @@ defineAction('adminMailTest', {
   async handler(input, ctx) {
     const settings = await getSettings(ctx.db, ctx.tenantId);
     const to = (input.to ?? settings.notify_email ?? '').trim();
-    if (!to) throw new Error('Set a notification address in Settings first');
-    await audit(ctx, 'mail_test', undefined, to);
-    return {
-      sent: false,
+    if (!to) throw new ActionError('Set a notification address in Settings first');
+    const res = await sendMail(ctx.db, ctx.tenantId, {
       to,
-      mode: settings.mail_mode ?? 'backend',
-      pending: 'mail provider not yet configured',
-    };
+      subject: `[${settings.co_name || settings.site_name || 'Merchforce'}] Test message`,
+      text:
+        `This is a test from your Merchforce console.\n\n` +
+        `If it reached you, notifications to customers will too.\n\n` +
+        `Sent ${displayStamp()}.`,
+    });
+    await audit(ctx, 'mail_test', to, res.ok ? `sent via ${res.via}` : `failed: ${res.error}`);
+
+    // The from address is reported either way: the usual reason a send fails is
+    // that it went out on a domain Resend has not verified for this supplier,
+    // and seeing the address is what makes that obvious.
+    return { sent: res.ok, to, from: res.from, via: res.via, ...(res.error ? { error: res.error } : {}) };
   },
 });

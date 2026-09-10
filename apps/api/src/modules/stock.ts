@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ActionError, defineAction, type ActionContext } from '../lib/dispatch.js';
 import { audit } from '../lib/audit.js';
-import { getSettings, saveSettings , displayStamp } from '../lib/settings.js';
+import { getSettings, saveSettings, displayStamp } from '../lib/settings.js';
+import { sendMail } from '../lib/mail.js';
 import { WIRE_STATUS } from '../lib/orderState.js';
 import type { SupplyStatus } from '../generated/prisma/index.js';
 
@@ -466,13 +467,58 @@ defineAction('adminStockAlert', {
   tier: 'staff',
   schema: z.object({}).passthrough(),
   async handler(_input, ctx) {
-    // Sends the reorder digest on demand. Wired to the mail provider in the
-    // mail phase; for now it reports what would go out and to whom.
     const settings = await getSettings(ctx.db, ctx.tenantId);
-    const to = settings.notify_email ?? '';
+    const to = (settings.notify_email ?? '').trim();
     if (!to) throw new ActionError('Set a notification address in Settings first');
-    await audit(ctx, 'stock_alert', undefined, to);
-    return { sent: false, to, pending: 'mail provider not yet configured' };
+
+    // Built from the same view the Stock tab shows, so the digest and the
+    // screen can never disagree about what needs ordering.
+    const products = await ctx.db.product.findMany({ where: { tenantId: ctx.tenantId } });
+    const supply = await ctx.db.supplyOrder.findMany({
+      where: { tenantId: ctx.tenantId, status: { in: OPEN_SUPPLY } },
+    });
+    const inbound = new Map<string, number>();
+    for (const s of supply) {
+      const left = s.qty - s.receivedQty;
+      if (left > 0) inbound.set(s.sku, (inbound.get(s.sku) ?? 0) + left);
+    }
+
+    const due = products
+      .filter((p) => {
+        const atp = atpOf(p);
+        return atp <= 0 || (p.reorderPoint > 0 && atp <= p.reorderPoint);
+      })
+      .sort((a, b) => atpOf(a) - atpOf(b));
+
+    if (!due.length) {
+      await audit(ctx, 'stock_alert', to, 'nothing below the reorder point');
+      return { sent: false, to, nothing_due: true };
+    }
+
+    const body =
+      `${due.length} product${due.length === 1 ? '' : 's'} at or below the reorder point ` +
+      `as at ${displayStamp()}.\n\n` +
+      due
+        .map((p) => {
+          const atp = atpOf(p);
+          const coming = inbound.get(p.sku) ?? 0;
+          return (
+            `${p.sku}  ${p.name}\n` +
+            `   available ${atp} · reorder point ${p.reorderPoint} · lot ${lotOf(p)}` +
+            `${coming ? ` · ${coming} already on order` : ''}` +
+            `${p.vendor ? ` · ${p.vendor}` : ''}`
+          );
+        })
+        .join('\n\n') +
+      `\n\nOpen the Stock tab to raise the supply orders.`;
+
+    const res = await sendMail(ctx.db, ctx.tenantId, {
+      to,
+      subject: `[${settings.co_name || settings.site_name || 'Merchforce'}] Reorder due — ${due.length} product${due.length === 1 ? '' : 's'}`,
+      text: body,
+    });
+    await audit(ctx, 'stock_alert', to, res.ok ? `sent via ${res.via}` : `failed: ${res.error}`);
+    return { sent: res.ok, to, count: due.length, ...(res.error ? { error: res.error } : {}) };
   },
 });
 

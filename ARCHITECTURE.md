@@ -74,6 +74,29 @@ not image or PDF are stored `Content-Disposition: attachment`, so an uploaded
 `.html` cannot execute on our origin. Every client-supplied key passes
 `assertKeyBelongsTo()` before use.
 
+## Mail
+
+Resend, with each supplier sending from their **own** domain: they verify it
+once, set `mail_from_email` in Settings, and their customers see mail from them.
+On a multi-supplier platform that is the whole point -- a proforma arriving from
+a stranger's domain does not get paid.
+
+Until a tenant has verified a domain, mail goes out on the platform address
+carrying their display name, with reply-to pointing at them. Apps Script had the
+same shape (a relay in the supplier's own Google account, falling back to the
+Merchforce account) for the same reason: a notification that silently vanishes
+is worse than one from the wrong address.
+
+Notifications are best effort and never roll back the action they accompany --
+an order whose confirmation bounced is still a confirmed order. Every failed
+send is written to the audit log as `mail_fail` with the provider's own reason,
+so a misconfigured domain is visible rather than silent.
+
+The eight notification points are carried over unchanged: new enquiry, enquiry
+assigned, enquiry accepted or rejected, proforma sent, proforma accepted or
+declined, purchase order received (to both sides), shipment dispatched or
+delivered, and the reorder digest.
+
 ## Security changes from the Apps Script version
 
 - **Login throttling.** `fnStaffLogin_` had no rate limit and no lockout. With

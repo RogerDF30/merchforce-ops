@@ -8,6 +8,7 @@ import { buildKey, presignGet, putObject } from '../lib/storage.js';
 import { htmlToPdf } from '../lib/pdf.js';
 import { piHtml, piTotal, type PiLine } from '../lib/piHtml.js';
 import { setStatus, WIRE_STATUS } from '../lib/orderState.js';
+import { notifyPiDecision, notifyPiSent, notifyPoReceived } from '../lib/notify.js';
 
 const MAX_DOC_BYTES = 10 * 1024 * 1024;
 
@@ -184,6 +185,8 @@ defineAction('adminPiBuild', {
     let status = req.status;
     if (input.send !== false) {
       ({ status } = await setStatus(ctx, req.id, 'PiSent'));
+      const fresh = await findByRef(ctx, input.id);
+      await notifyPiSent(ctx, fresh, fresh.lines);
     }
 
     return {
@@ -232,7 +235,11 @@ defineAction('adminPiUpload', {
     await ctx.db.request.update({ where: { id: req.id }, data });
     await audit(ctx, 'pi_upload', req.ref, piNumber);
 
-    if (input.send !== false) await setStatus(ctx, req.id, 'PiSent');
+    if (input.send !== false) {
+      await setStatus(ctx, req.id, 'PiSent');
+      const fresh = await findByRef(ctx, input.id);
+      await notifyPiSent(ctx, fresh, fresh.lines);
+    }
 
     return { pi_number: piNumber, pi_url: await presignGet(key) };
   },
@@ -265,6 +272,8 @@ defineAction('adminPoUpload', {
     // Receiving the PO is what deducts stock, through the one state machine.
     const { status } = await setStatus(ctx, req.id, 'PoReceived');
     await audit(ctx, 'po_upload', req.ref, poNumber || input.filename);
+
+    await notifyPoReceived(ctx, await findByRef(ctx, input.id), 'admin');
 
     return { po_url: await presignGet(key), status: WIRE_STATUS[status] };
   },
@@ -379,6 +388,8 @@ defineAction('orderPiRespond', {
       });
     }
 
+    await notifyPiDecision(ctx, r, input.accept, note);
+
     return { status: WIRE_STATUS[status] };
   },
 });
@@ -415,6 +426,8 @@ defineAction('orderPoUpload', {
     const clientCtx = { ...ctx, actor: `client:${r.email ?? ''}` };
     const { status } = await setStatus(clientCtx, r.id, 'PoReceived');
     await audit(clientCtx, 'po_upload', r.ref, poNumber || input.filename);
+
+    await notifyPoReceived(clientCtx, { ...r, poNumber, poKey: key }, 'client');
 
     return { status: WIRE_STATUS[status], po_url: await presignGet(key) };
   },

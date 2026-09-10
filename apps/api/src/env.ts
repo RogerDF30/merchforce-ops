@@ -30,6 +30,15 @@ const schema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
+  // ---- Mail (Resend) ----
+  // Absent in development: sends then report why they did not go, rather than
+  // pretending. Required in production.
+  RESEND_API_KEY: z.string().optional(),
+  // Used when a tenant has not verified their own sending domain yet.
+  MAIL_FALLBACK_FROM: z.string().email().default('no-reply@merchforce.app'),
+  // Where a customer's order page lives, for links in emails.
+  PUBLIC_ORDER_URL: z.string().default(''),
+
   CORS_ORIGINS: z
     .string()
     .default('')

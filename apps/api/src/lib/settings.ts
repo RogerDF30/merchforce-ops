@@ -17,6 +17,9 @@ export const DEFAULTS: Record<string, string> = {
   notify_email: '',
   mail_mode: 'backend',
   mail_from_name: '',
+  /// The supplier's own verified sending address. Blank until they verify a
+  /// domain, and mail then goes out on the platform address with their name.
+  mail_from_email: '',
   relay_url: '',
   relay_secret: '',
   low_stock_threshold: '25',

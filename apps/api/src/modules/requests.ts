@@ -8,6 +8,9 @@ import { newOrderToken } from '../lib/auth.js';
 import {
   FORWARD, TERMINAL, WIRE_STATUS, nextRef, parseStatus, setStatus,
 } from '../lib/orderState.js';
+import {
+  notifyAssigned, notifyDecision, notifyNewRequest, notifyShipment,
+} from '../lib/notify.js';
 
 const num = (v: Prisma.Decimal | null | undefined): number =>
   v === null || v === undefined ? 0 : Number(v);
@@ -206,6 +209,10 @@ defineAction('adminRequestDecide', {
         data: { token: newOrderToken() },
       });
     }
+
+    const fresh = await findByRef(ctx, input.id);
+    await notifyDecision(ctx, fresh, input.accept, input.note);
+
     return { status: WIRE_STATUS[status] };
   },
 });
@@ -244,6 +251,10 @@ defineAction('adminRequestAssign', {
       req.ref,
       `${was || 'nobody'} → ${email || 'nobody'}`,
     );
+
+    if (email && email !== was.toLowerCase()) {
+      await notifyAssigned(ctx, req, WIRE_STATUS[req.status], email);
+    }
 
     return { id: req.ref, assigned_to: email, assigned_name: name };
   },
@@ -347,6 +358,10 @@ defineAction('adminRequestCreate', {
     });
 
     await audit(ctx, 'request_create', ref, company);
+
+    const withLines = await findByRef(ctx, created.ref);
+    await notifyNewRequest(ctx, withLines, withLines.lines, total);
+
     return { id: created.ref, total_est: total };
   },
 });
@@ -391,6 +406,13 @@ defineAction('adminShipmentSave', {
     });
 
     await audit(ctx, 'shipment_save', req.ref, `#${no}`);
+
+    // Only a real movement is worth an email: saving a draft row that is still
+    // pending would tell the customer their goods had shipped.
+    if (data.status === 'dispatched' || data.status === 'delivered') {
+      await notifyShipment(ctx, req, { ...data, shipmentNo: no });
+    }
+
     return { id: req.ref, no };
   },
 });
