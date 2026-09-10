@@ -30,6 +30,11 @@ const schema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
+  // Pepper from the Apps Script install being migrated from. Needed only to
+  // verify a migrated password once; can be removed when no account still
+  // has password_legacy set.
+  LEGACY_PEPPER: z.string().optional(),
+
   // ---- Mail (Resend) ----
   // Absent in development: sends then report why they did not go, rather than
   // pretending. Required in production.

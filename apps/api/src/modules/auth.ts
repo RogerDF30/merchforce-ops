@@ -4,7 +4,10 @@ import { audit } from '../lib/audit.js';
 import { getPublicSettings } from '../lib/settings.js';
 import { redis } from '../lib/redis.js';
 import { clearRateLimit, rateLimit } from '../lib/ratelimit.js';
-import { hashPassword, signAccessToken, verifyPassword } from '../lib/auth.js';
+import {
+  hashPassword, signAccessToken, verifyLegacy, verifyPassword,
+} from '../lib/auth.js';
+import { env } from '../env.js';
 
 const MIN_PASSWORD = 10;
 
@@ -89,7 +92,34 @@ defineAction('staffLogin', {
 
     if (!user) return deny('no such user');
     if (!user.active) return deny('disabled');
-    if (!(await verifyPassword(input.password, user.passHash))) {
+
+    if (user.passwordLegacy) {
+      // A migrated account still carries its Apps Script hash. Verify against
+      // that once, then replace it with bcrypt and drop the salt, so the old
+      // scheme survives exactly one sign-in per person.
+      if (!env.LEGACY_PEPPER) {
+        await audit(
+          { ...ctx, actor: input.email }, 'login_fail', undefined,
+          'legacy password but LEGACY_PEPPER is not set',
+        );
+        throw new ActionError(
+          'This account needs its password reset — ask an admin.', 401,
+        );
+      }
+      const ok = verifyLegacy(
+        input.password, user.legacySalt ?? '', env.LEGACY_PEPPER, user.passHash,
+      );
+      if (!ok) return deny('bad password (legacy)');
+      await ctx.db.user.update({
+        where: { id: user.id },
+        data: {
+          passHash: await hashPassword(input.password),
+          legacySalt: null,
+          passwordLegacy: false,
+        },
+      });
+      await audit({ ...ctx, actor: user.name || user.email }, 'password_upgraded');
+    } else if (!(await verifyPassword(input.password, user.passHash))) {
       return deny('bad password');
     }
 

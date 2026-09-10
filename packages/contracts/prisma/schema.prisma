@@ -163,6 +163,14 @@ model User {
   email     String
   name      String
   passHash  String    @map("pass_hash")
+
+  /// Set only by the migration. Apps Script stored SHA-256(password + salt +
+  /// PEPPER), which cannot be converted to bcrypt without the plaintext -- so
+  /// a migrated account keeps its old hash and salt, verifies against them
+  /// once, and is re-hashed with bcrypt on that first successful sign-in.
+  /// Without this every supplier's staff would have to reset on day one.
+  legacySalt     String?  @map("legacy_salt")
+  passwordLegacy Boolean  @default(false) @map("password_legacy")
   role      UserRole  @default(staff)
   active    Boolean   @default(true)
   lastLogin DateTime? @map("last_login")

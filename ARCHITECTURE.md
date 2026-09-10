@@ -113,6 +113,35 @@ delivered, and the reorder digest.
   (`assets/js/*.js:8`, `apps-script/Config.gs:7`). All secrets now come from the
   environment and `.env` is ignored.
 
+## Migrating an Apps Script install
+
+    pnpm --filter @merchforce/api exec tsx scripts/migrate.ts \
+      --from ./export --slug acme --name "Acme Merch" [--dry-run] [--skip-files]
+
+`--from` is a directory of CSVs exported from the backend Sheet, one per tab,
+named after the tab. That route is used rather than pulling through the live
+API because the Users tab carries `pass_hash` and `salt`, and the API never
+returns them -- which is the difference between a supplier's whole team keeping
+their passwords and everyone resetting on day one.
+
+**Passwords survive the move.** A migrated account keeps its Apps Script hash,
+verifies against it once, and is re-hashed with bcrypt on that first successful
+sign-in. Set `LEGACY_PEPPER` to the PEPPER from the old install's Script
+Properties or nobody can sign in; it can be removed once no row still has
+`password_legacy` set.
+
+**Files** referenced by Drive URL are fetched and re-uploaded to the bucket.
+Anything unreachable is reported and the row migrates without it: a missing PI
+copy should not block an order's history from coming across.
+
+**Nothing is silent.** `--dry-run` reads and validates everything and writes
+nothing. A real run prints migrated counts beside export counts, so a dropped
+row is visible as a gap rather than discovered months later, and lists every
+problem: duplicate SKUs, tiers against products that do not exist, contacts on
+missing accounts, unreadable `status_dates`, account owners who were never
+staff. Duplicates keep the FIRST row -- a half-filled later copy would
+otherwise blank fields the good row had.
+
 ## Local development
 
     docker compose up -d                 # Postgres, Redis, MinIO
