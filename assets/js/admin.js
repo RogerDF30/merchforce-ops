@@ -650,7 +650,7 @@ function openAccount(c) {
         '<div class="field"><textarea id="acNoteText" placeholder="add a note" style="min-height:64px"></textarea></div>' +
         '<button class="btn small" id="acNoteAdd" style="margin-bottom:10px">Add note</button>' +
         '<div id="acNotes"><div class="spin"></div></div></div>' +
-      '<div><div class="section-head"><h2 style="font-size:16px">Attachments</h2><div class="note-sub">Filed under Merchforce / Accounts / ' + esc(c.id) + ' in Drive.</div></div>' +
+      '<div><div class="section-head"><h2 style="font-size:16px">Attachments</h2><div class="note-sub">Stored against this account. Links expire, so use the console to fetch one.</div></div>' +
         '<label class="btn small" for="acFile" style="cursor:pointer;margin-bottom:10px">Upload a file</label><input id="acFile" type="file" class="sr-only" multiple>' +
         '<span class="note" id="acFileOut" style="margin-left:8px"></span>' +
         '<div id="acFiles"><div class="spin"></div></div></div>' +
@@ -708,7 +708,7 @@ function openAccount(c) {
     }).join('') + '</tbody></table></div>' : '<div class="empty" style="padding:14px 0">Nothing filed yet.</div>';
     $('acFiles').querySelectorAll('button[data-fdel]').forEach(function (b) {
       b.onclick = function () {
-        if (!confirm('Delete this file from Drive?')) return;
+        if (!confirm('Delete this file? This cannot be undone.')) return;
         api('adminAccountFileDelete', { id: b.dataset.fdel }).then(function () { toast('File deleted'); loadExtras(); }).catch(function (e) { toast(e.message); });
       };
     });
@@ -1517,7 +1517,7 @@ function editBrand(b) {
       paintLogo();
     };
     rd.onload = function () {
-      // The upload only puts the file in Drive — the URL reaches the Brands row
+      // The upload only stores the file — the URL reaches the Brands row
       // when Save is pressed, so block Save until we actually hold that URL.
       uploading = true;
       $('bSave').disabled = true;
@@ -1853,7 +1853,7 @@ function renderDecks() {
   $('p-decks').innerHTML =
     '<div class="panel-head"><h2>Product decks</h2><span class="sp"></span>' +
       '<button class="btn primary small" id="dkNew">+ Deck</button></div>' +
-    '<p class="note" style="margin-top:-6px">Pick products, get a PDF and a PowerPoint with image, specs, MOQ, price tiers and stock as of now, under the company identity in Settings. Files land in Drive under Merchforce / Decks and can be sent from here.</p>' +
+    '<p class="note" style="margin-top:-6px">Pick products, get a PDF and a PowerPoint with image, specs, MOQ, price tiers and stock as of now, under the company identity in Settings. Files are stored with the order and can be sent from here.</p>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th>Deck</th><th>For</th><th class="num">Products</th><th>Created</th><th>Files</th><th>Sent to</th><th></th>' +
     '</tr></thead><tbody id="dkRows"></tbody></table></div>';
@@ -1879,7 +1879,7 @@ function renderDecks() {
   });
   tb.querySelectorAll('button[data-del]').forEach(function (b) {
     b.onclick = function () {
-      if (!confirm('Delete this deck and its files from Drive?')) return;
+      if (!confirm('Delete this deck and its files? This cannot be undone.')) return;
       b.disabled = true;
       api('adminDeckDelete', { id: b.dataset.del }).then(function () { toast('Deck deleted'); loadDecks(); })
         .catch(function (e) { b.disabled = false; toast(e.message); });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineAction, type ActionContext } from '../lib/dispatch.js';
 import { audit } from '../lib/audit.js';
-import { getSettings } from '../lib/settings.js';
+import { getSettings , displayStamp } from '../lib/settings.js';
 import { WIRE_STATUS } from '../lib/orderState.js';
 
 const DAY_MS = 86_400_000;
@@ -272,7 +272,7 @@ defineAction('adminAnalytics', {
     for (const v of abc.values()) abcCount[v]++;
 
     return {
-      generated_at: new Date().toISOString(),
+      generated_at: displayStamp(),
       days,
       basis: 'orders and stock movement',
       requests: {

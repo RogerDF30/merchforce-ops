@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ActionError, defineAction, type ActionContext } from '../lib/dispatch.js';
 import { audit } from '../lib/audit.js';
-import { getSettings, saveSettings } from '../lib/settings.js';
+import { getSettings, saveSettings , displayStamp } from '../lib/settings.js';
 import { WIRE_STATUS } from '../lib/orderState.js';
 import type { SupplyStatus } from '../generated/prisma/index.js';
 
@@ -232,7 +232,7 @@ defineAction('adminStock', {
     const supplyRows = supply.map(supplyOut);
 
     return {
-      generated_at: new Date().toISOString(),
+      generated_at: displayStamp(),
       measured_over_days: CONSUMPTION_DAYS,
       cover_days: COVER_DAYS,
       reorder,

@@ -89,3 +89,24 @@ export async function saveSettings(
     });
   }
 }
+
+/**
+ * "10 Sept 2026, 12:31 pm" in IST.
+ *
+ * generated_at is printed straight into the Stock and Analytics headers, so it
+ * has to arrive pre-formatted: Apps Script sent a display string and the
+ * console never parsed it. Returning an ISO timestamp here put a raw
+ * 2026-09-10T06:59:19.350Z on screen.
+ */
+export function displayStamp(d: Date = new Date()): string {
+  const date = d.toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata',
+  });
+  const time = d
+    .toLocaleTimeString('en-IN', {
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+    })
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return `${date}, ${time}`;
+}
