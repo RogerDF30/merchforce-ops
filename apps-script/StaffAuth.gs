@@ -18,19 +18,75 @@ function sessionMinutes_() {
   return n >= 5 && n <= 480 ? n : 30;
 }
 
+/**
+ * Sign-in throttle.
+ *
+ * API_TOKEN is the only thing standing between the open internet and
+ * fnStaffLogin_, and it ships in a public JavaScript bundle -- so in practice
+ * anyone can call this. Without a limit that is an unmetered password-guessing
+ * oracle against every staff account.
+ *
+ * Apps Script does not expose the caller's IP, so this counts per ACCOUNT.
+ * That is the axis that matters: it is what stops a dictionary run against one
+ * person.
+ *
+ * Failures only. A correct password is always accepted and clears the count,
+ * so nobody can lock a colleague out by guessing wrong at their address eight
+ * times -- that would trade a brute-force defence for a denial-of-service tool.
+ */
+var LOGIN_MAX_FAILS_ = 8;
+var LOGIN_WINDOW_S_ = 900;   // 15 minutes
+
+function loginFailKey_(email) { return 'lf_' + Utilities.base64EncodeWebSafe(email); }
+
+function loginFails_(email) {
+  var v = CacheService.getScriptCache().get(loginFailKey_(email));
+  return v ? Number(v) : 0;
+}
+
+function noteLoginFail_(email) {
+  var c = CacheService.getScriptCache();
+  var k = loginFailKey_(email);
+  // The window starts at the first failure and is not extended by later ones,
+  // so a slow trickle cannot hold an account throttled indefinitely.
+  c.put(k, String(loginFails_(email) + 1), LOGIN_WINDOW_S_);
+}
+
+function clearLoginFails_(email) {
+  CacheService.getScriptCache().remove(loginFailKey_(email));
+}
+
 function fnStaffLogin_(p) {
   var email = String(p.email || '').toLowerCase().trim();
   var pass = String(p.password || '');
   if (!email || !pass) return err_('Email and password are required');
 
+  var throttled = loginFails_(email) >= LOGIN_MAX_FAILS_;
+
   var rowNum = findRow_('Users', function (r) { return String(r.email).toLowerCase() === email; });
-  if (rowNum < 0) { audit_(email, 'login_fail', '', 'no such user'); return err_('Invalid email or password'); }
+  if (rowNum < 0) {
+    noteLoginFail_(email);
+    audit_(email, 'login_fail', '', 'no such user');
+    Utilities.sleep(1000);
+    return err_('Invalid email or password');
+  }
   var u = readRows_('Users')[rowNum - 2];
   if (!isTrue_(u.active)) { audit_(email, 'login_fail', '', 'disabled'); return err_('This account is disabled'); }
   if (hashPassword_(pass, u.salt) !== u.pass_hash) {
-    audit_(email, 'login_fail', '', 'bad password');
+    noteLoginFail_(email);
+    audit_(email, 'login_fail', '', throttled ? 'bad password (throttled)' : 'bad password');
+    // A second per attempt is nothing to a person typing and a great deal to a
+    // script: this hash is a single fast SHA-256, so guesses are otherwise
+    // limited only by how quickly requests can be made.
+    Utilities.sleep(1000);
+    if (throttled) {
+      return err_('Too many sign-in attempts for this account. Try again in 15 minutes.');
+    }
     return err_('Invalid email or password');
   }
+
+  // Correct password: allowed through even while throttled, and the count goes.
+  clearLoginFails_(email);
   u.last_login = now_();
   writeRecord_('Users', rowNum, u);
   audit_(email, 'login_ok', '', '');
