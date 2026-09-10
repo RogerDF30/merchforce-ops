@@ -34,7 +34,30 @@ const SUPPLY_FROM_WIRE: Record<string, SupplyStatus> = {
 };
 const OPEN_SUPPLY: SupplyStatus[] = ['planned', 'ordered', 'partial'];
 
-const leadDays = (lead: number | null): number => lead && lead > 0 ? lead : 14;
+/**
+ * Days for the reorder maths, read out of free text.
+ *
+ * Stock.gs did this by stripping every non-digit, which glues a range together:
+ * "3-4 weeks" became the number 34, then 34 days. That is not 3 weeks, not 4
+ * weeks, and not deliberate. It read plausibly enough that nobody noticed.
+ *
+ * Here the numbers are read as numbers and the unit is honoured. A range takes
+ * its upper bound, because planning replenishment against the optimistic end of
+ * a supplier's own estimate is how you run out.
+ *
+ *   "21 days"    -> 21        "3-4 weeks" -> 28
+ *   "2 months"   -> 60        "21"        -> 21   (days assumed)
+ *   "ex-stock"   -> 14        ""          -> 14   (fallback)
+ */
+const leadDays = (lead: string | null): number => {
+  const text = String(lead ?? '').toLowerCase();
+  const numbers = text.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+  if (!numbers.length) return 14;
+  const value = Math.max(...numbers);
+  const unit = /month/.test(text) ? 30 : /week/.test(text) ? 7 : 1;
+  const days = value * unit;
+  return days > 0 ? Math.round(days) : 14;
+};
 
 /** Lot a suggestion rounds up to: batch for made goods, vendor MOQ for bought. */
 const lotOf = (p: {
@@ -254,7 +277,7 @@ defineAction('adminSupplyFields', {
     batch_qty: z.coerce.number().int().nonnegative().optional(),
     reorder_point: z.coerce.number().int().nonnegative().optional(),
     safety_stock: z.coerce.number().int().nonnegative().optional(),
-    lead_time: z.union([z.coerce.number(), z.literal('')]).optional(),
+    lead_time: z.string().optional(),
   }),
   async handler(input, ctx) {
     const sku = input.sku.toUpperCase();
@@ -275,10 +298,7 @@ defineAction('adminSupplyFields', {
         batchQty: input.batch_qty ?? null,
         reorderPoint: input.reorder_point ?? 0,
         safetyStock: input.safety_stock ?? 0,
-        leadTime:
-          input.lead_time === '' || input.lead_time === undefined
-            ? null
-            : Number(input.lead_time),
+        leadTime: (input.lead_time ?? '').trim() || null,
       },
     });
 

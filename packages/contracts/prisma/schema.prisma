@@ -239,7 +239,10 @@ model Product {
   /// Text, never a number: Sheets silently ate the leading zero on codes like 0902.
   hsn      String?
   mrp      Decimal? @db.Decimal(12, 2)
-  leadTime Int?     @map("lead_time")
+  /// Free text, as it was in the sheet: a supplier writes "3-4 weeks" or
+  /// "21 days", and that string is what the deck and the quotation print. The
+  /// reorder maths pulls the digits out of it (see leadDays in stock.ts).
+  leadTime String?  @map("lead_time")
 
   onHand       Int @default(0) @map("on_hand")
   reserved     Int @default(0)
