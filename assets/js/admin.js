@@ -3,9 +3,9 @@
 
 var CONFIG = {
   API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? '/api' : 'https://script.google.com/macros/s/AKfycbxrQDSF3on09dWcD9Ct6Buge9k4h0kTZi13NQ_QyF7pGO3IX7ZCrrXGanyuIhYNAl-gyA/exec',
+    ? '/api' : 'https://script.google.com/macros/s/AKfycbyeFbVGHmXXG06D8E-nTvBL3-WyWvAtkYEcbI-2a-qb_fnlvtKMRyH0G4eH2LzO8vYn/exec',
   API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'mf-demo-token' : 'mf_TNzQCuxEw5TWUhwpKW3wt8HtutDJ'
+    ? 'mf-demo-token' : 'mf_HmRaxrSvaYGCbOSGF3c8hqANccOQ'
 };
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
