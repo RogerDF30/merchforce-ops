@@ -1,16 +1,11 @@
 /* Merchforce console */
 'use strict';
 
-var CONFIG = {
-  API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? '/api' : 'https://script.google.com/macros/s/AKfycbyeFbVGHmXXG06D8E-nTvBL3-WyWvAtkYEcbI-2a-qb_fnlvtKMRyH0G4eH2LzO8vYn/exec',
-  API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'mf-demo-token' : 'mf_HmRaxrSvaYGCbOSGF3c8hqANccOQ'
-};
+// The backend is Supabase; see mf-client.js (MF.call) and mf-config.js.
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v30';
+var BUILD = 'v40-supabase';
 
 var A = {
   key: '', session: '', user: null, sessionMinutes: 30, settings: null,
@@ -35,35 +30,9 @@ function toast(msg) {
   clearTimeout(t._h); t._h = setTimeout(function () { t.hidden = true; }, 2600);
 }
 function api(action, body) {
-  body = body || {};
-  body.action = action;
-  body.token = CONFIG.API_TOKEN;
-  if (A.session) body.session = A.session; else body.adminKey = A.key;
-  return fetch(CONFIG.API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(body),
-    redirect: 'follow'
-  }).then(function (r) {
-    // A non-JSON body means Google answered with an HTML page (auth wall,
-    // quota, outage) — surface that instead of a bare parse error.
-    return r.text().then(function (txt) {
-      try { return JSON.parse(txt); }
-      catch (e) {
-        throw new Error(action + ': server returned ' + r.status + ' ' +
-          (r.ok ? 'with a non-JSON body' : r.statusText) +
-          ' — ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160));
-      }
-    });
-  }, function (netErr) {
-    throw new Error(action + ': could not reach the backend (' + (netErr.message || netErr) + ')');
-  }).then(function (res) {
-    if (!res.ok) {
-      if (/session has expired|sign in again/i.test(res.error || '')) lock('Your session expired. Sign in again.');
-      throw new Error(res.error || 'Request failed');
-    }
-    if (res.session && A.session) { A.session = res.session; persistSession(); }
-    return res;
+  return MF.call(action, body).catch(function (e) {
+    if (/session has expired|sign in again|JWT expired|invalid jwt/i.test(e.message)) lock('Your session expired. Sign in again.');
+    throw e;
   });
 }
 function statusPill(s) { return '<span class="pill st-' + esc(s).replace(/ /g, '') + '">' + esc(s) + '</span>'; }
@@ -86,19 +55,13 @@ function brandName(id) {
 
 function persistSession() {
   try {
-    if (A.session) localStorage.setItem('mf_session', JSON.stringify({ s: A.session, u: A.user, settings: A.settings || null, minutes: A.sessionMinutes || 30, relay: A.relayStatus || null }));
-    else localStorage.removeItem('mf_session');
+    if (A.user) localStorage.setItem('mf_console', JSON.stringify({ u: A.user, settings: A.settings || null, minutes: A.sessionMinutes || 30, relay: A.relayStatus || null }));
+    else localStorage.removeItem('mf_console');
   } catch (e) {}
 }
-/* Returns the cached console state ({settings, user, ...}) when a sign-in is stored, else null. */
+/* Cached console state ({settings, user, ...}) from the last visit, or null. */
 function restoreSession() {
-  try {
-    var raw = localStorage.getItem('mf_session');
-    if (!raw) return null;
-    var d = JSON.parse(raw);
-    A.session = d.s || ''; A.user = d.u || null;
-    return A.session ? d : null;
-  } catch (e) { return null; }
+  try { var d = JSON.parse(localStorage.getItem('mf_console') || 'null'); if (d) A.user = d.u || null; return d; } catch (e) { return null; }
 }
 
 /* The tool's own branding (Settings → Branding): header, sign-in screen, tab title.
@@ -122,10 +85,12 @@ try { applyBranding(JSON.parse(localStorage.getItem('mf_brand') || 'null') || {}
 function enterConsole(res) {
   A.settings = res.settings;
   applyBranding(A.settings);
-  A.relayStatus = res.relay_status || null;
+  A.relayStatus = res.relay_status || null; A.syncAccount = res.sync_account || A.syncAccount;
   if (res.user) A.user = res.user;
   if (res.session_minutes) A.sessionMinutes = Number(res.session_minutes) || 30;
-  $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : 'master key';
+  $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : '';
+  A.notices = res.notices || A.notices || [];
+  paintNotices();
   $('lock').hidden = true;
   $('console').hidden = false;
   persistSession();
@@ -134,57 +99,40 @@ function enterConsole(res) {
   document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.toggle('on', x.dataset.t === 'enquiries'); });
   document.querySelectorAll('.panel').forEach(function (p) { p.hidden = p.id !== 'p-enquiries'; });
   loadEnquiries();
+  var deep = (location.hash || '').replace('#', '');      // e.g. opened from the platform screen at #catalog
+  if (deep && LOADERS[deep]) setTimeout(function () { goTab(deep); }, 0);
   if (!A._searchWired) { wireSearch(); A._searchWired = true; }
   armIdle();
 }
 
 function lock(msg) {
-  A.session = ''; A.user = null; A.key = '';
+  A.user = null;
   persistSession();
+  MF.signOut();
   clearTimeout(A._idle);
   $('console').hidden = true;
   $('lock').hidden = false;
   $('lockMsg').textContent = msg || 'Sign in to continue.';
   $('lPass').value = '';
   $('lockErr').textContent = '';
-  showStaff();
 }
 
 function signIn() {
   var email = $('lEmail').value.trim(), pass = $('lPass').value;
   if (!email || !pass) { $('lockErr').textContent = 'Email and password, please.'; return; }
+  if (!MF.vendor) { $('lockErr').textContent = 'Open this console from your Merchforce address (yourname.merchforce.io).'; return; }
   $('loginBtn').disabled = true;
   $('lockErr').textContent = '';
-  A.key = '';
-  fetch(CONFIG.API_URL, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow',
-    body: JSON.stringify({ action: 'staffLogin', token: CONFIG.API_TOKEN, email: email, password: pass })
-  }).then(function (r) { return r.json(); }).then(function (res) {
+  MF.signIn(email, pass).then(function () { return api('me'); }).then(function (res) {
     $('loginBtn').disabled = false;
-    if (!res.ok) { $('lockErr').textContent = res.error || 'Sign-in failed'; return; }
-    A.session = res.session; A.user = res.user;
-    persistSession();
-    enterConsole(res);
-  }).catch(function (e) { $('loginBtn').disabled = false; $('lockErr').textContent = e.message; });
-}
-
-function unlock() {
-  A.key = $('adminKey').value.trim();
-  A.session = ''; A.user = null;
-  if (!A.key) return;
-  $('unlockBtn').disabled = true;
-  $('lockErr2').textContent = '';
-  api('adminUnlock').then(function (res) {
-    $('unlockBtn').disabled = false;
+    A.user = res.user;
     enterConsole(res);
   }).catch(function (e) {
-    $('lockErr2').textContent = e.message;
-    $('unlockBtn').disabled = false;
+    $('loginBtn').disabled = false;
+    $('lockErr').textContent = /access to this vendor/i.test(e.message) ? 'This sign-in has no access to ' + MF.vendor + '.' : e.message;
+    if (/access to this vendor/i.test(e.message)) MF.signOut();
   });
 }
-
-function showStaff() { $('lockStaff').hidden = false; $('lockMaster').hidden = true; }
-function showMaster() { $('lockStaff').hidden = true; $('lockMaster').hidden = false; }
 
 /* Inactivity: the server refuses a stale token; this just gets the person to the
    lock screen at the same moment rather than on their next click. */
@@ -198,12 +146,8 @@ function armIdle() {
   document.addEventListener(ev, function () { if (!$('console').hidden) armIdle(); }, { passive: true });
 });
 
-$('unlockBtn').onclick = unlock;
 $('loginBtn').onclick = signIn;
 $('lPass').addEventListener('keydown', function (e) { if (e.key === 'Enter') signIn(); });
-$('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
-$('useMaster').onclick = function (e) { e.preventDefault(); showMaster(); };
-$('useStaff').onclick = function (e) { e.preventDefault(); showStaff(); };
 if ($('buildTag')) $('buildTag').textContent = BUILD;
 
 // A sign-in survives a reload. The console opens straight away from the cached
@@ -212,35 +156,60 @@ if ($('buildTag')) $('buildTag').textContent = BUILD;
 // to the sign-in screen. A network hiccup never signs anyone out.
 (function () {
   var cached = restoreSession();
-  if (!cached) return;
-  if (cached.settings) {
-    enterConsole({ settings: cached.settings, user: A.user, session_minutes: cached.minutes, relay_status: cached.relay });
-  } else {
-    $('lockMsg').textContent = 'Signing you back in…';
-  }
-  var confirm = function (again) {
-    api('adminUnlock').then(function (res) {
-      // refresh settings and identity quietly; the console is already up
-      A.settings = res.settings; A.relayStatus = res.relay_status || null;
-      if (res.user) A.user = res.user;
-      if (res.session_minutes) A.sessionMinutes = Number(res.session_minutes) || 30;
-      applyBranding(A.settings);
-      $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : 'master key';
-      persistSession();
-      if ($('console').hidden) enterConsole(res);
-    }).catch(function (e) {
-      if (/expired|sign in again|bad admin key/i.test(e.message)) { lock('Your sign-in has lapsed. Sign in again.'); return; }
-      if (again) setTimeout(function () { confirm(false); }, 2000);
-      else if ($('console').hidden) lock('Could not reach the backend: ' + e.message);
-    });
-  };
-  confirm(true);
+  MF.hasSession().then(function (signedIn) {
+    if (!signedIn) { if (cached) { A.user = null; persistSession(); } return; }
+    if (cached && cached.settings) {
+      enterConsole({ settings: cached.settings, user: A.user, session_minutes: cached.minutes, relay_status: cached.relay });
+    } else {
+      $('lockMsg').textContent = 'Signing you back in…';
+    }
+    var confirm = function (again) {
+      api('me').then(function (res) {
+        A.settings = res.settings; A.user = res.user;
+        if (res.session_minutes) A.sessionMinutes = Number(res.session_minutes) || 30;
+        applyBranding(A.settings);
+        $('whoami').textContent = A.user ? (A.user.name + (A.user.role === 'admin' ? ' · admin' : '')) : '';
+        A.notices = res.notices || []; paintNotices();
+        persistSession();
+        if ($('console').hidden) enterConsole(res);
+      }).catch(function (e) {
+        if (/expired|sign in again|access to this vendor/i.test(e.message)) { lock('Your sign-in has lapsed. Sign in again.'); return; }
+        if (again) setTimeout(function () { confirm(false); }, 2000);
+        else if ($('console').hidden) lock('Could not reach the backend: ' + e.message);
+      });
+    };
+    confirm(true);
+  });
 })();
-$('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
+
+/* In-app notices (products from the sheet awaiting review, image links that failed). */
+function paintNotices() {
+  var box = $('notices');
+  if (!box) return;
+  var list = A.notices || [];
+  var u = A.user || {}, acting = u.acting_for && u.platform;
+  box.hidden = !list.length && !acting;
+  box.innerHTML = (acting
+    ? '<div class="note2" style="margin-bottom:8px;border-left-color:var(--accent)"><b>CompanyStore ' + (u.role === 'viewer' ? 'view-only' : 'admin') + '.</b> ' +
+      (u.role === 'viewer' ? 'You can look at everything in ' + esc(A.settings && A.settings.app_name || 'this vendor') + ' but cannot change anything.'
+                           : 'You are working in ' + esc(A.settings && A.settings.app_name || 'this vendor') + '\'s console; every change is recorded under your name.') +
+      '</div>' : '') +
+    list.map(function (n) {
+    return '<div class="note2 warn" style="display:flex;gap:12px;align-items:center;margin-bottom:8px"><span style="flex:1">' + esc(n.text) + '</span>' +
+      '<button class="btn small" data-notice="' + esc(n.type) + '">' + (n.type === 'products_review' ? 'Review' : 'Show') + '</button></div>';
+  }).join('');
+  box.querySelectorAll('button[data-notice]').forEach(function (b) {
+    b.onclick = function () { A.catalogFilter = b.dataset.notice === 'products_review' ? 'review' : 'image_errors'; A.loaded.catalog = false; goTab('catalog'); };
+  });
+}
+function refreshNotices() {
+  return api('me').then(function (res) { A.notices = res.notices || []; paintNotices(); }).catch(function () {});
+}
+
 $('lockNow').onclick = function () { lock('Signed out.'); };
 
 /* ---------- tabs ---------- */
-var LOADERS = { enquiries: loadEnquiries, orders: loadOrders, mine: loadMine, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, accounts: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: loadSettings };
+var LOADERS = { enquiries: loadEnquiries, orders: loadOrders, returns: loadReturns, mine: loadMine, catalog: loadCatalog, stock: loadStock, brands: loadCatalog, accounts: loadCompanies, decks: loadDecks, users: loadUsers, analytics: loadAnalytics, settings: loadSettings };
 document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
     document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
@@ -939,6 +908,7 @@ function openOrder(r) {
   } else if (['PO Received', 'In Production', 'Dispatched'].indexOf(r.status) >= 0) {
     next = '<button class="btn primary small" id="oShip">Add shipment</button>';
   }
+  if (RETURNABLE.indexOf(r.status) >= 0) next += ' <button class="btn small" id="oReturn">Log a return</button>';
 
   openDrawer(
     '<h2 style="margin:0 0 2px">' + esc(r.id) + ' ' + statusPill(r.status) + '</h2>' +
@@ -973,6 +943,7 @@ function openOrder(r) {
           '<td>' + statusPill(s.status) + '</td>' +
           '<td><button class="btn ghost small" data-shed="' + s.no + '">Edit</button></td></tr>';
       }).join('') + '</tbody></table></div>' : '') +
+    '<div id="oReturns"></div>' +
     '<div class="f2"><div class="field"><label>Follow-up owner</label><select id="mOwner"><option value="' + esc(r.assigned_to || '') + '">' + esc(r.assigned_name || 'Unassigned') + '</option></select></div>' +
       '<div class="field"><label>Raised by</label><input value="' + esc(r.raised_by || '—') + '" readonly></div></div>' +
     '<div class="field"><label>Internal notes</label><textarea id="mNotes">' + esc(r.admin_notes || '') + '</textarea></div>' +
@@ -1006,6 +977,19 @@ function openOrder(r) {
   if ($('oPiUp')) $('oPiUp').onclick = function () { uploadDoc(r, 'pi'); };
   if ($('oPoUp')) $('oPoUp').onclick = function () { uploadDoc(r, 'po'); };
   if ($('oShip')) $('oShip').onclick = function () { openShipment(r, null); };
+  if ($('oReturn')) $('oReturn').onclick = function () { newReturn(r); };
+  if (RETURNABLE.indexOf(r.status) >= 0) api('adminReturns', { request_id: r.id }).then(function (res) {
+    if (!$('oReturns') || !res.returns.length) return;
+    $('oReturns').innerHTML = '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead>' +
+      '<tr><th>Return</th><th>Reason</th><th class="num">Units</th><th>Status</th><th></th></tr></thead><tbody>' +
+      res.returns.map(function (x) {
+        return '<tr><td>' + esc(x.id) + '</td><td>' + esc(x.reason) + '</td><td class="num">' + qty(returnUnits(x)) + '</td>' +
+          '<td>' + returnPill(x.status) + '</td><td><button class="btn ghost small" data-rma="' + esc(x.id) + '">Open</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+    $('oReturns').querySelectorAll('button[data-rma]').forEach(function (b) {
+      b.onclick = function () { openReturn(res.returns.filter(function (x) { return x.id === b.dataset.rma; })[0]); };
+    });
+  }).catch(function () {});
   document.querySelectorAll('button[data-shed]').forEach(function (b) {
     b.onclick = function () {
       openShipment(r, r.shipments.filter(function (s) { return s.no === Number(b.dataset.shed); })[0]);
@@ -1188,6 +1172,216 @@ function openShipment(r, sh) {
   };
 }
 
+/* ================= RETURNS ================= */
+/* Staff log a return against a shipped order: Requested → Approved → Received
+   → Closed (or Rejected). Receiving is the inspection — restocked units go back
+   on hand, scrapped ones do not. Closing records the resolution. */
+var RETURNABLE = ['Dispatched', 'Delivered', 'Closed'];
+var RETURN_STAGES = ['Requested', 'Approved', 'Received', 'Closed'];
+
+function returnPill(st) {
+  var cls = { Requested: 'st-New', Approved: 'st-PIAccepted', Received: 'st-POReceived', Closed: 'st-Delivered', Rejected: 'st-Rejected' }[st] || 'st-Closed';
+  return '<span class="pill ' + cls + '">' + esc(st) + '</span>';
+}
+function returnUnits(x) { return x.lines.reduce(function (s, l) { return s + l.qty; }, 0); }
+
+function loadReturns() {
+  A.loaded.returns = true;
+  $('p-returns').innerHTML = '<div class="spin"></div>';
+  return api('adminReturns').then(function (res) {
+    A.returns = res.returns; A.returnReasons = res.reasons; A.resolutions = res.resolutions;
+    renderReturns();
+  }).catch(function (e) { $('p-returns').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+}
+
+function renderReturns() {
+  var all = A.returns || [];
+  var open = all.filter(function (x) { return ['Closed', 'Rejected'].indexOf(x.status) < 0; });
+  A.returnView = A.returnView || 'open';
+  var rows = A.returnView === 'open' ? open : all;
+  var count = function (st) { return all.filter(function (x) { return x.status === st; }).length; };
+  $('p-returns').innerHTML =
+    '<div class="stat-row">' +
+      stat(count('Requested'), 'awaiting approval') + stat(count('Approved'), 'on the way back') +
+      stat(count('Received'), 'received, to resolve') + stat(count('Closed'), 'closed') +
+    '</div>' +
+    '<div class="panel-head"><h2>Returns</h2>' +
+      '<div class="seg" id="retSeg">' +
+        '<button data-v="open" class="' + (A.returnView === 'open' ? 'on' : '') + '">Open (' + open.length + ')</button>' +
+        '<button data-v="all" class="' + (A.returnView === 'all' ? 'on' : '') + '">All (' + all.length + ')</button>' +
+      '</div><span class="sp"></span>' +
+      '<button class="btn small" id="retReload">Refresh</button></div>' +
+    '<p class="note" style="margin-top:-6px">Log a return from a shipped order (Orders → open the order → Log a return).</p>' +
+    (rows.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Return</th><th>Order</th><th>Account</th><th>Reason</th>' +
+      '<th class="num">Units</th><th>Status</th><th>Logged</th></tr></thead><tbody>' +
+      rows.map(function (x) {
+        return '<tr class="click" data-rma="' + esc(x.id) + '"><td><b>' + esc(x.id) + '</b></td><td>' + esc(x.request_id) + '</td>' +
+          '<td>' + esc(x.company) + '</td><td>' + esc(x.reason) + '</td><td class="num">' + qty(returnUnits(x)) + '</td>' +
+          '<td>' + returnPill(x.status) + '</td><td>' + fmtDate(x.created) + '</td></tr>';
+      }).join('') + '</tbody></table></div>'
+      : '<div class="empty">' + (A.returnView === 'open' ? 'No open returns.' : 'No returns logged yet.') + '</div>');
+  $('retReload').onclick = loadReturns;
+  $('retSeg').querySelectorAll('button').forEach(function (b) { b.onclick = function () { A.returnView = b.dataset.v; renderReturns(); }; });
+  $('p-returns').querySelectorAll('tr[data-rma]').forEach(function (tr) {
+    tr.onclick = function () { openReturn(all.filter(function (x) { return x.id === tr.dataset.rma; })[0]); };
+  });
+}
+
+function afterReturnChange(msg, stockMoved) {
+  closeDrawer(); toast(msg);
+  if (stockMoved) { A.loaded.catalog = false; A.loaded.stock = false; }
+  loadReturns();
+}
+
+function newReturn(r) {
+  var reasons = A.returnReasons || ['Refused at delivery', 'Damaged', 'Wrong item', 'Quality issue', 'Excess / not needed', 'Other'];
+  openDrawer(
+    '<h2 style="margin:0 0 4px">Log a return — ' + esc(r.id) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">' + esc(r.company) + '. Enter how many of each item are coming back. Nothing moves in stock until the goods are received and inspected.</p>' +
+    '<div class="field"><label>Reason</label><select id="rtReason"><option value="">Choose…</option>' +
+      reasons.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('') + '</select></div>' +
+    '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th class="num">Ordered</th><th class="num">Returning</th></tr></thead><tbody>' +
+      r.lines.map(function (l, i) {
+        return '<tr><td>' + esc(l.sku) + '</td><td>' + esc(l.name) + '</td><td class="num">' + qty(l.qty) + '</td>' +
+          '<td class="num"><input id="rtQ' + i + '" type="number" min="0" max="' + l.qty + '" value="0" style="width:90px"></td></tr>';
+      }).join('') + '</tbody></table></div>' +
+    '<div class="field"><label>Note</label><textarea id="rtNote" placeholder="What the customer reported"></textarea></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="rtSave" style="width:100%;justify-content:center">Log return</button>');
+  $('rtSave').onclick = function () {
+    $('rtSave').disabled = true;
+    api('adminReturnCreate', {
+      request_id: r.id, reason: $('rtReason').value, note: $('rtNote').value.trim(),
+      lines: r.lines.map(function (l, i) { return { sku: l.sku, qty: Number($('rtQ' + i).value || 0) }; })
+    }).then(function (res) { A.returnView = 'open'; goTab('returns'); afterReturnChange(res.id + ' logged for ' + r.id); })
+      .catch(function (e) { $('mErr').textContent = e.message; $('rtSave').disabled = false; });
+  };
+}
+
+function returnTimeline(x) {
+  if (x.status === 'Rejected') return '<div class="note2 warn"><b>Rejected</b> — nothing came back into stock.</div>';
+  var done = RETURN_STAGES.indexOf(x.status);
+  return '<div class="stage-row">' + RETURN_STAGES.map(function (st, i) {
+    var when = x.status_dates[st] ? new Date(x.status_dates[st]) : null;
+    return '<div class="stage ' + (i < done ? 'done' : (i === done ? 'now' : '')) + '"><span class="dot"></span><span class="lbl">' + st + '</span>' +
+      (when && !isNaN(when) ? '<span class="when">' + when.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</span>' : '') + '</div>';
+  }).join('') + '</div>';
+}
+
+function openReturn(x) {
+  var st = x.status, live = st !== 'Closed' && st !== 'Rejected';
+  var lineRows = x.lines.map(function (l, i) {
+    var inspect = st === 'Approved'
+      ? '<td class="num"><input id="rvR' + i + '" type="number" min="0" value="' + l.qty + '" style="width:80px"></td>' +
+        '<td class="num"><input id="rvS' + i + '" type="number" min="0" value="0" style="width:80px"></td>'
+      : '<td class="num">' + (st === 'Received' || st === 'Closed' ? qty(l.restocked) : '—') + '</td>' +
+        '<td class="num">' + (st === 'Received' || st === 'Closed' ? qty(l.scrapped) : '—') + '</td>';
+    return '<tr><td>' + esc(l.sku) + '</td><td>' + esc(l.name) + '</td><td class="num">' + qty(l.qty) + '</td>' + inspect + '</tr>';
+  }).join('');
+
+  var actions = '';
+  if (st === 'Requested') {
+    actions = '<button class="btn primary small" id="rtApprove">Approve return</button> <button class="btn danger small" id="rtReject">Reject</button>';
+  } else if (st === 'Approved') {
+    actions = '<button class="btn primary small" id="rtReceive">Goods received — record inspection</button> <button class="btn danger small" id="rtReject">Reject</button>';
+  }
+  var resolutions = A.resolutions || ['Credit note', 'Refund', 'Replacement', 'None'];
+  var closeForm = st !== 'Received' ? '' :
+    '<div class="card-block" style="margin-bottom:14px"><h3>Resolve and close</h3>' +
+      '<div class="f2"><div class="field"><label>Resolution</label><select id="rcRes"><option value="">Choose…</option>' +
+        resolutions.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('') + '</select></div>' +
+      '<div class="field" id="rcAmtF"><label>Amount ₹</label><input id="rcAmt" type="number" min="0"></div>' +
+      '<div class="field" id="rcRefF"><label>Reference (credit note / refund no.)</label><input id="rcRef"></div>' +
+      '<div class="field" id="rcFileF"><label>Document (optional)</label><input id="rcFile" type="file" accept=".pdf,image/*"></div></div>' +
+      '<p class="note" id="rcHint">Replacement creates a new zero-value order for the returned items. It deducts stock now and ships from the Orders tab.</p>' +
+      '<button class="btn primary" id="rcGo" style="width:100%;justify-content:center">Close return</button></div>';
+  var resolved = st !== 'Closed' ? '' :
+    '<div class="card-block" style="margin-bottom:14px"><h3>Resolution</h3><b>' + esc(x.resolution) + '</b>' +
+      (x.amount ? ' · ' + inr(x.amount) : '') + (x.ref ? ' · ' + esc(x.ref) : '') +
+      (x.doc_url ? '<br><a href="' + esc(x.doc_url) + '" target="_blank">Open document ↗</a>' : '') +
+      (x.replacement_id ? '<br>Replacement order <a href="#" id="rcRep">' + esc(x.replacement_id) + '</a>' : '') + '</div>';
+
+  openDrawer(
+    '<h2 style="margin:0 0 2px">' + esc(x.id) + ' ' + returnPill(st) + '</h2>' +
+    '<p style="color:var(--ink-3);margin:0 0 14px;font-size:13.5px">' + esc(x.company) + ' · order <a href="#" id="rtOrder">' + esc(x.request_id) + '</a> · ' +
+      esc(x.reason) + ' · logged by ' + esc(x.created_by || '—') + ' on ' + fmtDate(x.created) + '</p>' +
+    returnTimeline(x) +
+    (actions ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' + actions + '</div>' : '') +
+    '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th class="num">Returning</th>' +
+      '<th class="num">Restock</th><th class="num">Scrap</th></tr></thead><tbody>' + lineRows + '</tbody></table></div>' +
+    (st === 'Approved' ? '<p class="note" style="margin-top:-6px">On receipt, split every unit into restock (back on hand) or scrap (written off).</p>' : '') +
+    closeForm + resolved +
+    '<div class="f2"><div class="field"><label>Return carrier</label><input id="rtCarrier" value="' + esc(x.carrier || '') + '"' + (live ? '' : ' readonly') + '></div>' +
+      '<div class="field"><label>Return tracking</label><input id="rtTrack" value="' + esc(x.tracking || '') + '"' + (live ? '' : ' readonly') + '></div></div>' +
+    '<div class="field"><label>Note</label><textarea id="rtNote"' + (live ? '' : ' readonly') + '>' + esc(x.note || '') + '</textarea></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    (live ? '<button class="btn" id="rtSave" style="width:100%;justify-content:center">Save details</button>' : ''));
+
+  function details() { return { id: x.id, carrier: $('rtCarrier').value.trim(), tracking: $('rtTrack').value.trim(), note: $('rtNote').value.trim() }; }
+  function fail(btn) { return function (e) { $('mErr').textContent = e.message; if (btn) btn.disabled = false; }; }
+  function goOrder(id) {
+    return function (e) {
+      e.preventDefault();
+      ensureRequests().then(function () {
+        var o = A.requests.filter(function (r) { return r.id === id; })[0];
+        if (o) openOrder(o);
+      });
+    };
+  }
+  $('rtOrder').onclick = goOrder(x.request_id);
+  if ($('rcRep')) $('rcRep').onclick = goOrder(x.replacement_id);
+  if ($('rtSave')) $('rtSave').onclick = function () {
+    $('rtSave').disabled = true;
+    api('adminReturnUpdate', details()).then(function () { afterReturnChange(x.id + ' saved'); }).catch(fail($('rtSave')));
+  };
+  if ($('rtApprove')) $('rtApprove').onclick = function () {
+    var b = details(); b.status = 'Approved';
+    $('rtApprove').disabled = true;
+    api('adminReturnUpdate', b).then(function () { afterReturnChange(x.id + ' approved'); }).catch(fail($('rtApprove')));
+  };
+  if ($('rtReject')) $('rtReject').onclick = function () {
+    var b = details(); b.status = 'Rejected';
+    $('rtReject').disabled = true;
+    api('adminReturnUpdate', b).then(function () { afterReturnChange(x.id + ' rejected'); }).catch(fail($('rtReject')));
+  };
+  if ($('rtReceive')) $('rtReceive').onclick = function () {
+    $('rtReceive').disabled = true;
+    api('adminReturnUpdate', details()).then(function () {
+      return api('adminReturnReceive', { id: x.id, lines: x.lines.map(function (l, i) {
+        return { sku: l.sku, restocked: Number($('rvR' + i).value || 0), scrapped: Number($('rvS' + i).value || 0) };
+      }) });
+    }).then(function (res) {
+      var n = res.restocked.reduce(function (s, l) { return s + l.qty; }, 0);
+      afterReturnChange(x.id + ' received' + (n ? ' · ' + qty(n) + ' back on hand' : ''), n > 0);
+    }).catch(fail($('rtReceive')));
+  };
+  if ($('rcRes')) {
+    var paint = function () {
+      var v = $('rcRes').value, money = v === 'Credit note' || v === 'Refund';
+      $('rcAmtF').hidden = !money; $('rcRefF').hidden = !money; $('rcFileF').hidden = !money;
+      $('rcHint').hidden = v !== 'Replacement';
+    };
+    $('rcRes').onchange = paint; paint();
+    $('rcGo').onclick = function () {
+      var res = $('rcRes').value;
+      var body = { id: x.id, resolution: res, amount: Number($('rcAmt').value || 0), ref: $('rcRef').value.trim() };
+      var f = $('rcFile').files[0];
+      if (f && f.size > 10 * 1024 * 1024) { $('mErr').textContent = 'File is over 10MB.'; return; }
+      $('rcGo').disabled = true;
+      var send = function () {
+        api('adminReturnClose', body).then(function (out) {
+          if (out.replacement_id) loadRequests();
+          afterReturnChange(x.id + ' closed' + (out.replacement_id ? ' · replacement ' + out.replacement_id + ' created' : ''), !!out.replacement_id);
+        }).catch(fail($('rcGo')));
+      };
+      if (!f || $('rcFileF').hidden) return send();
+      var rd = new FileReader();
+      rd.onload = function () { body.filename = f.name; body.mime = f.type; body.data = rd.result; send(); };
+      rd.readAsDataURL(f);
+    };
+  }
+}
+
 /* ================= CATALOG + BRANDS ================= */
 function loadCatalog() {
   A.loaded.catalog = A.loaded.brands = true;
@@ -1204,6 +1398,11 @@ function loadCatalog() {
 }
 
 function renderCatalog() {
+  if (A.catalogFilter) {           // arrived from a notice: open on that filter
+    var fs = filterState('cat');
+    fs.visible = A.catalogFilter === 'review' ? 'review' : 'imgerr';
+    A.catalogFilter = '';
+  }
   var lowCount = A.products.filter(function (p) { return p.atp <= p.reorder_point; }).length;
   $('p-catalog').innerHTML =
     '<div class="stat-row">' +
@@ -1218,8 +1417,9 @@ function renderCatalog() {
       { key: 'brand', label: 'Brand', options: A.brands.map(function (b) { return [b.id, b.name]; }) },
       { key: 'category', label: 'Category', options: uniq(A.products.map(function (p) { return p.category; })).map(function (c) { return [c, c]; }) },
       { key: 'stock', label: 'Stock', options: [['in', 'In stock'], ['low', 'At / below reorder point'], ['out', 'Out of stock']] },
-      { key: 'visible', label: 'Visibility', options: [['yes', 'Published'], ['no', 'Hidden']] }
+      { key: 'visible', label: 'Visibility', options: [['yes', 'Published'], ['no', 'Hidden'], ['review', 'Needs review (from sheet)'], ['imgerr', 'Image link failed']] }
     ], 'search SKU, name, HSN') +
+    '<div id="cReview"></div>' +
     '<div class="note" id="cCount" style="margin:-4px 0 8px"></div>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th></th><th>SKU</th><th>Product</th><th>Brand</th><th class="num">MOQ</th><th class="num">MRP</th><th class="num">From</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">ATP</th><th>Visible</th>' +
@@ -1239,6 +1439,8 @@ function paintCatalogRows() {
     if (st.category && p.category !== st.category) return false;
     if (st.visible === 'yes' && !p.visible) return false;
     if (st.visible === 'no' && p.visible) return false;
+    if (st.visible === 'review' && !p.review_pending) return false;
+    if (st.visible === 'imgerr' && !p.image_error) return false;
     if (st.stock === 'out' && p.atp > 0) return false;
     if (st.stock === 'low' && !(p.atp <= p.reorder_point)) return false;
     if (st.stock === 'in' && !(p.atp > 0 && p.atp > p.reorder_point)) return false;
@@ -1246,6 +1448,7 @@ function paintCatalogRows() {
   });
   $('cCount').textContent = shown.length === A.products.length ? A.products.length + ' products' : shown.length + ' of ' + A.products.length + ' products';
   if (!shown.length) tb.innerHTML = '<tr><td colspan="11"><div class="empty" style="padding:26px 0">No product matches these filters.</div></td></tr>';
+  paintReviewBar(st.visible === 'review' ? shown : []);
   shown.forEach(function (p) {
     var low = p.atp <= p.reorder_point;
     var from = p.tiers.length ? p.tiers[p.tiers.length - 1].price : 0;
@@ -1254,7 +1457,11 @@ function paintCatalogRows() {
     tr.innerHTML =
       '<td>' + (p.images[0] ? '<img class="prod-img" style="width:38px;height:38px" src="' + esc(p.images[0]) + '">' : '') + '</td>' +
       '<td>' + esc(p.sku) + '</td>' +
-      '<td><b>' + esc(p.name) + '</b><br><small style="color:var(--ink-3)">' + esc(p.category) + '</small></td>' +
+      '<td><b>' + esc(p.name) + '</b>' +
+        (p.review_pending ? ' <span class="pill st-New" title="Created from your stock sheet; hidden until reviewed">new from sheet</span>' : '') +
+        (p.image_error ? ' <span class="pill st-Rejected" title="' + esc(p.image_error) + '">image failed</span>' : '') +
+        (p.images_pending ? ' <span class="pill st-PISent">importing image…</span>' : '') +
+        '<br><small style="color:var(--ink-3)">' + esc(p.category) + '</small></td>' +
       '<td>' + esc(brandName(p.brand_id)) + '</td><td class="num">' + p.moq + '</td>' +
       '<td class="num" style="text-decoration:line-through;color:var(--ink-3)">' + (p.mrp ? inr(p.mrp) : '—') + '</td>' +
       '<td class="num">' + (from ? inr(from) : '—') + '</td>' +
@@ -1264,6 +1471,29 @@ function paintCatalogRows() {
     tr.onclick = function () { editProduct(p); };
     tb.appendChild(tr);
   });
+}
+
+/* Products that arrived from the stock sheet: show them, or keep them hidden. Either clears the review flag. */
+function paintReviewBar(list) {
+  var box = $('cReview');
+  if (!box) return;
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="note2" style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">' +
+    '<span style="flex:1">' + list.length + ' product' + (list.length === 1 ? '' : 's') + ' from your stock sheet, hidden until you decide. ' +
+      'Check names, prices and images, then:</span>' +
+    '<button class="btn primary small" id="rvShow">Show ' + (list.length === 1 ? 'it' : 'these ' + list.length) + '</button>' +
+    '<button class="btn small" id="rvKeep">Keep hidden</button></div>';
+  var go = function (show, btn) {
+    btn.disabled = true;
+    api('adminProductReview', { skus: list.map(function (p) { return p.sku; }), show: show }).then(function (res) {
+      toast(res.reviewed + ' product' + (res.reviewed === 1 ? '' : 's') + (show ? ' now visible' : ' kept hidden'));
+      filterState('cat').visible = '';
+      refreshNotices();
+      return loadCatalog();
+    }).catch(function (e) { toast(e.message); btn.disabled = false; });
+  };
+  $('rvShow').onclick = function () { go(true, $('rvShow')); };
+  $('rvKeep').onclick = function () { go(false, $('rvKeep')); };
 }
 
 /* Product editor — tier rows: min qty @ price, per-tier GST (blank inherits) */
@@ -1412,7 +1642,7 @@ function editProduct(p) {
     if (!payload.sku || !payload.name) { $('mErr').textContent = 'SKU and name are required.'; return; }
     $('eSave').disabled = true;
     api('adminProductSave', { product: payload })
-      .then(function () { closeDrawer(); toast(payload.sku + ' saved'); loadCatalog(); })
+      .then(function () { closeDrawer(); toast(payload.sku + ' saved'); loadCatalog(); refreshNotices(); })
       .catch(function (e) { $('mErr').textContent = e.message; $('eSave').disabled = false; });
   };
 }
@@ -2681,7 +2911,11 @@ function renderAnalytics() {
 /* ================= SETTINGS + STOCK SYNC ================= */
 function loadSettings() {
   var need = A.brands.length ? Promise.resolve() : api('adminCatalog').then(function (res) { A.products = res.products; A.brands = res.brands; }).catch(function () {});
-  need.then(renderSettings);
+  // full settings (sync mappings, relay secret) are admin-only and not part of the sign-in payload
+  need.then(function () { return api('adminSettings'); }).then(function (res) {
+    A.settings = res.settings; A.relayStatus = res.relay_status || null; A.syncAccount = res.sync_account || A.syncAccount;
+    renderSettings();
+  }).catch(function (e) { $('p-settings').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
 }
 
 function renderSettings() {
@@ -2999,7 +3233,7 @@ function wireMailCard() {
       relay_secret: $('wSecret') ? $('wSecret').value.trim() : ''
     } }).then(function (res) {
       A.settings = res.settings;
-      A.relayStatus = res.relay_status || null;
+      A.relayStatus = res.relay_status || null; A.syncAccount = res.sync_account || A.syncAccount;
       $('wSave').disabled = false;
       toast('Mail settings saved');
       renderSettings();
@@ -3132,8 +3366,7 @@ function renderSyncCard(s) {
         : '<span style="color:var(--warn);font-weight:700">' + ((m.tabs_meta || m.headers) ? 'columns received — map them' : 'awaiting first push') + '</span>') + '</td>' +
       '<td style="font-size:12.5px">' + lastTxt + '</td>' +
       '<td style="white-space:nowrap">' +
-      (push ? '<button class="btn small" data-conn="' + i + '">Connector</button> '
-            : '<button class="btn small" data-sync="' + i + '">Sync</button> <button class="btn small" data-conn="' + i + '" title="Script for your sheet that pulls stock from Merchforce (for Viewer-only sheets)">Stock connector</button> ') +
+      '<button class="btn small" data-sync="' + i + '">Sync</button> ' +
       '<button class="btn ghost small" data-edit="' + i + '">Edit</button> ' +
       '<button class="btn ghost small" data-del="' + i + '" style="color:var(--bad)">✕</button></td></tr>';
   }).join('');
@@ -3145,12 +3378,11 @@ function renderSyncCard(s) {
         ? '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead><tr>' +
           '<th>Brand</th><th>Sheet</th><th>Mapping</th><th>Last sync</th><th></th>' +
           '</tr></thead><tbody id="yRows">' + rows + '</tbody></table></div>'
-        : '<p class="note">No sheets linked yet. Link a sheet you already keep, or let Merchforce create one in its standard format below.</p>') +
+        : '<p class="note">No sheets linked yet. Link a sheet you already keep (share it as Editor with ' + esc(A.syncAccount || 'merchforce-sheets@merchforce.iam.gserviceaccount.com') + '), or set one up in the standard format below.</p>') +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
         '<button class="btn primary small" id="yAdd">+ Add brand mapping</button>' +
         (maps.length > 1 ? '<button class="btn small" id="ySyncAll">Sync all now</button>' : '') +
         '<button class="btn small" id="yWriteAll" title="Write every product\'s on hand into the linked sheets now">Write stock back now</button>' +
-        '<button class="btn small" id="yLive">⚡ Instant sync setup</button>' +
         '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-left:auto">Auto-sync' +
           '<select id="yAuto" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px">' +
             '<option value="off"' + (s.sync_auto === 'off' || !s.sync_auto ? ' selected' : '') + '>Off — manual only</option>' +
@@ -3159,15 +3391,16 @@ function renderSyncCard(s) {
             '<option value="daily"' + (s.sync_auto === 'daily' ? ' selected' : '') + '>Daily (~6 am)</option>' +
           '</select></label>' +
       '</div>' +
-      '<div class="card-block" style="margin-top:16px"><h3>Start from a Merchforce stock sheet</h3>' +
-        '<p class="note-sub" style="margin:-4px 0 12px">No usable sheet yet, or one in a format that fights you? Merchforce creates a clean Google Sheet in its standard format (Code · Product Name · HSN · GST % · MRP · Selling Price Excluding GST · Stock · MOQ · Lead Time), one tab per brand, pre-filled from your catalogue, with a How to use tab. ' +
-          'It is linked with write-back on, so the sheet and Merchforce show the same stock from day one.</p>' +
+      '<div class="card-block" style="margin-top:16px"><h3>Set up a Merchforce stock sheet</h3>' +
+        '<p class="note-sub" style="margin:-4px 0 12px">Create a blank Google Sheet in your own Drive and share it as <b>Editor</b> with <b>' + esc(A.syncAccount || 'merchforce-sheets@merchforce.iam.gserviceaccount.com') + '</b>. ' +
+          'Paste its link here and Merchforce sets it up in its standard format (Code · Product Name · HSN · GST % · MRP · Selling Price · Stock · Committed · Available · MOQ · Lead Time · Image URL), ' +
+          'one tab per brand, pre-filled from your catalogue, with a How to use tab. It is linked with write-back on, so the sheet and Merchforce show the same stock from day one. The sheet stays yours.</p>' +
         '<div class="f2">' +
-          '<div class="field"><label>Share with (Google account that will maintain it, optional)</label><input id="yTplEmail" type="email" placeholder="stock@yourcompany.com"></div>' +
+          '<div class="field"><label>Your sheet link</label><input id="yTplSheet" placeholder="https://docs.google.com/spreadsheets/d/…"></div>' +
           '<div class="field"><label>Brands</label><select id="yTplBrand"><option value="">All brands, one tab each</option>' + A.brands.map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(b.name) + ' only</option>'; }).join('') + '</select></div>' +
         '</div>' +
-        '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-bottom:10px"><input type="checkbox" id="yTplLink" checked> Link it now (replaces any existing pull mapping for those brands)</label>' +
-        '<button class="btn primary small" id="yTemplate">Create the sheet</button>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-bottom:10px"><input type="checkbox" id="yTplLink" checked> Link it now (replaces any existing mapping for those brands)</label>' +
+        '<button class="btn primary small" id="yTemplate">Set up the sheet</button>' +
         '<p class="note" id="yTplOut" style="margin-top:10px"></p></div>' +
     '</div>';
 }
@@ -3180,7 +3413,7 @@ function brandNameSafe(id) {
 function refreshSettings_() {
   return api('adminSettings', {}).then(function (res) {
     A.settings = res.settings;
-    A.relayStatus = res.relay_status || A.relayStatus;
+    A.relayStatus = res.relay_status || A.relayStatus; A.syncAccount = res.sync_account || A.syncAccount;
     renderSettings();
   });
 }
@@ -3205,17 +3438,16 @@ function wireSyncCard() {
     };
   }
   $('yTemplate').onclick = function () {
-    var email = $('yTplEmail').value.trim();
-    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('yTplOut').textContent = 'That email does not look right.'; return; }
+    var sheet = $('yTplSheet').value.trim();
+    if (!sheet) { $('yTplOut').textContent = 'Paste the link of the sheet you shared with Merchforce.'; return; }
     $('yTemplate').disabled = true;
-    $('yTplOut').textContent = 'Building the sheet…';
-    api('adminSyncTemplate', { editor_email: email, brand: $('yTplBrand').value, link: $('yTplLink').checked }).then(function (res) {
+    $('yTplOut').textContent = 'Setting up the sheet…';
+    api('adminSyncTemplate', { sheet: sheet, brand: $('yTplBrand').value, link: $('yTplLink').checked }).then(function (res) {
       $('yTemplate').disabled = false;
       if (res.maps) A.settings.sync_maps = JSON.stringify(res.maps);
-      $('yTplOut').innerHTML = 'Ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a>' +
-        (res.shared ? ' · shared with ' + esc(res.shared) + ' as editor' : ' · view-only link; share it from Drive with whoever maintains it') +
-        (res.linked ? ' · ' + res.linked + ' brand mapping' + (res.linked === 1 ? '' : 's') + ' linked with write-back on.' : '.');
-      if (res.linked) toast('Sheet created and linked'); else toast('Sheet created');
+      $('yTplOut').innerHTML = 'Ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a> · ' +
+        esc((res.tabs || []).join(', ')) + (res.linked ? ' · ' + res.linked + ' mapping' + (res.linked === 1 ? '' : 's') + ' linked with write-back on.' : '.');
+      toast(res.linked ? 'Sheet set up and linked' : 'Sheet set up');
       if (res.linked) setTimeout(renderSettings, 1200);
     }).catch(function (e) { $('yTemplate').disabled = false; $('yTplOut').textContent = e.message; });
   };
@@ -3226,7 +3458,6 @@ function wireSyncCard() {
       return refreshSettings_();
     }).catch(function (e) { toast(e.message); }).then(function () { if ($('yWriteAll')) $('yWriteAll').disabled = false; });
   };
-  $('yLive').onclick = openLiveSyncHelp;
   var auto = $('yAuto');
   if (auto) {
     auto.onchange = function () {
@@ -3251,12 +3482,6 @@ function wireSyncCard() {
           toast(s.error ? s.error : s.updated + ' updated, ' + s.created + ' created, ' + s.unknown + ' unknown');
           return refreshSettings_();
         }).catch(function (e) { toast(e.message); b.disabled = false; b.textContent = 'Sync'; });
-      };
-    });
-    tb.querySelectorAll('button[data-conn]').forEach(function (b) {
-      b.onclick = function () {
-        var maps = JSON.parse(A.settings.sync_maps || '[]');
-        openPushConnector(maps[Number(b.dataset.conn)]);
       };
     });
     tb.querySelectorAll('button[data-edit]').forEach(function (b) {
@@ -3292,7 +3517,6 @@ function openMapEditor(m, index) {
     '<h2 style="margin:0 0 4px">' + (isNew ? 'Link a brand sheet' : 'Edit mapping') + '</h2>' +
     '<div class="field"><label>How the data moves</label><select id="zMode">' +
       '<option value="pull"' + (mode === 'pull' ? ' selected' : '') + '>Merchforce reads your sheet (share it with the Merchforce account)</option>' +
-      '<option value="push"' + (mode === 'push' ? ' selected' : '') + '>Your sheet sends to Merchforce (nothing shared, stays in your account)</option>' +
     '</select></div>' +
     '<p class="note" id="zModeNote" style="margin:-4px 0 14px"></p>' +
     '<div class="field"><label>Brand</label><select id="zBrand">' +
@@ -3310,7 +3534,7 @@ function openMapEditor(m, index) {
       '<input type="checkbox" id="zCreate"' + (m.create_new ? ' checked' : '') + '> Auto-create products for new SKUs in this sheet' +
     '</label>' +
     '<label id="zWbWrap" style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-top:10px"' + (mode === 'push' ? ' hidden' : '') + '>' +
-      '<input type="checkbox" id="zWriteBack"' + (m.write_back !== false ? ' checked' : '') + '> Write stock back to this sheet' +
+      '<input type="checkbox" id="zWriteBack"' + (m.write_back !== false ? ' checked' : '') + '> Write stock back to this sheet <span style="font-weight:400;color:var(--ink-3)">(also fills <b>Committed</b> and <b>Available</b> columns if the tab has them)</span>' +
     '</label>' +
     '<p class="note" style="margin:4px 0 0">Every order, dispatch, receipt and manual adjustment in Merchforce updates the Stock column in your sheet, so a sync never undoes those movements. Needs the sheet shared with the Merchforce account as Editor, and a Stock column in the mapping. Not available when the sheet sends to Merchforce.</p>' +
     '<p class="note" style="margin:4px 0 0">New products are created hidden under this mapping\'s brand, so you can review and publish them from the Catalog tab. Needs a specific brand selected.</p>' +
@@ -3466,7 +3690,7 @@ function openMapEditor(m, index) {
     $('zWbWrap').hidden = push;
     $('zModeNote').innerHTML = push
       ? 'For a sheet you would rather not share. A small connector runs on <b>your</b> sheet and sends only the columns you map here; Merchforce never opens the file. You get the connector script right after saving.'
-      : 'Merchforce opens the sheet directly. Share it with the Merchforce account: Viewer to read, <b>Editor</b> if stock is to be written back. Prefer Viewer only? Turn write-back off and use the <b>Stock connector</b> from the mapping list instead; it pulls stock into the sheet from your side.';
+      : 'Merchforce opens the sheet directly. Share it with <b>' + esc(A.syncAccount || 'merchforce-sheets@merchforce.iam.gserviceaccount.com') + '</b>: Viewer to read, <b>Editor</b> if stock is to be written back (Stock, Committed and Available columns).';
     $('zSave').textContent = push ? 'Save mapping & get connector' : 'Save mapping & sync now';
     paintMap();
   }
@@ -3502,7 +3726,6 @@ function openMapEditor(m, index) {
       $('mErr').textContent = 'Each tab needs its SKU column and at least one field mapping.'; return;
     }
     if (push && !$('zBrand').value) { $('mErr').textContent = 'A push mapping must be bound to one brand.'; return; }
-    if ($('zCreate').checked && !$('zBrand').value) { $('mErr').textContent = 'Auto-create needs a specific brand selected.'; return; }
     $('zSave').disabled = true;
     var payload = { map: { mode: push ? 'push' : 'pull', brand: $('zBrand').value,
                            sheet: push ? '' : $('zSheet').value.trim(),
@@ -3513,13 +3736,6 @@ function openMapEditor(m, index) {
     if (index !== null && index !== undefined) payload.index = index;
     api('adminSyncMapSave', payload).then(function (res) {
       var idx = (index !== null && index !== undefined) ? index : res.maps.length - 1;
-      if (push) {
-        A.settings.sync_maps = JSON.stringify(res.maps);
-        closeDrawer();
-        renderSettings();
-        openPushConnector(res.maps[idx]);
-        return null;
-      }
       return api('adminSyncRun', { index: idx }).then(function (r2) {
         var s2 = r2.results[0].summary;
         toast(s2.error ? s2.error : 'Synced: ' + s2.updated + ' updated, ' + s2.created + ' created, ' + s2.unknown + ' unknown');
@@ -3527,180 +3743,6 @@ function openMapEditor(m, index) {
         return refreshSettings_();
       });
     }).catch(function (e) { $('mErr').textContent = e.message; $('zSave').disabled = false; });
-  };
-}
-
-/* The push connector: runs on the business's own sheet, sends only mapped columns. */
-function connectorCode(m) {
-  var push = m.mode === 'push';
-  var stockCol = '';
-  (m.sources || []).concat(m.sources && m.sources.length ? [] : [{ tab: m.tab, sku_col: m.sku_col, fields: m.fields || [] }]).forEach(function (src) {
-    (src.fields || []).forEach(function (f) { if (f.field === 'on_hand' && !stockCol) stockCol = f.col; });
-  });
-  var skuCol = (m.sources && m.sources[0] && m.sources[0].sku_col) || m.sku_col || 'Code';
-  return "/** Merchforce connector — runs inside this sheet, under your own Google account. Nothing here is shared with anyone. */\n" +
-"var MERCHFORCE_URL = '" + CONFIG.API_URL + "';\n" +
-"var MERCHFORCE_TOKEN = '" + CONFIG.API_TOKEN + "';\n" +
-"var PUSH_KEY = '" + (m.push_key || '') + "';\n" +
-"var TABS = [];              // " + (push ? "empty = send every tab; or e.g. ['Stock','Price List']" : "tabs to write stock into; empty = every tab that has the columns below") + "\n" +
-"var SKU_COLUMN = '" + skuCol.replace(/'/g, "\\'") + "';      // header of the column holding the product code\n" +
-"var STOCK_COLUMN = '" + (stockCol || 'Stock').replace(/'/g, "\\'") + "';    // header of the column Merchforce keeps current\n" +
-"var POLL_MINUTES = 5;       // how often to fetch stock from Merchforce (1 on a Workspace account, 5 on a free Gmail account)\n" +
-"\n" +
-"function onOpen() {\n" +
-"  SpreadsheetApp.getUi().createMenu('Merchforce')\n" +
-"    .addItem('Pull stock now', 'merchforcePullStock')\n" +
-(push ? "    .addItem('Send this sheet now', 'merchforceSend')\n" : "") +
-"    .addItem('Install / repair connector', 'install')\n" +
-"    .addToUi();\n" +
-"}\n" +
-"\n" +
-"function install() {\n" +
-"  ScriptApp.getProjectTriggers().forEach(function (t) {\n" +
-"    if (/^merchforce/.test(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);\n" +
-"  });\n" +
-(push ?
-"  ScriptApp.newTrigger('merchforceOnEdit').forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();\n" +
-"  ScriptApp.newTrigger('merchforceHourly').timeBased().everyHours(1).create();\n" : "") +
-"  ScriptApp.newTrigger('merchforcePullStock').timeBased().everyMinutes(POLL_MINUTES).create();\n" +
-(push ? "  merchforceSend();\n" : "") +
-"  merchforcePullStock(true);\n" +
-"}\n" +
-"\n" +
-(push ?
-"function merchforceOnEdit(e) {\n" +
-"  var cache = CacheService.getScriptCache();\n" +
-"  if (cache.get('mf_recent')) return;   // at most one send per 30s while editing\n" +
-"  cache.put('mf_recent', '1', 30);\n" +
-"  merchforceSend();\n" +
-"}\n" +
-"function merchforceHourly() { merchforceSend(); }\n" +
-"\n" +
-"function merchforceSend() {\n" +
-"  var tabs = [];\n" +
-"  SpreadsheetApp.getActive().getSheets().forEach(function (sh) {\n" +
-"    if (TABS.length && TABS.indexOf(sh.getName()) < 0) return;\n" +
-"    var lr = sh.getLastRow(), lc = sh.getLastColumn();\n" +
-"    if (lr < 1 || lc < 1) return;\n" +
-"    var values = sh.getRange(1, 1, Math.min(lr, 2001), lc).getValues();\n" +
-"    var headers = values.shift();\n" +
-"    tabs.push({ name: sh.getName(), headers: headers, rows: values });\n" +
-"  });\n" +
-"  if (!tabs.length) return;\n" +
-"  var res = UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
-"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true, followRedirects: true,\n" +
-"    payload: JSON.stringify({ action: 'syncPush', token: MERCHFORCE_TOKEN, push_key: PUSH_KEY, tabs: tabs })\n" +
-"  });\n" +
-"  Logger.log(res.getContentText());\n" +
-"}\n" +
-"\n" : "") +
-"/** Fetch current stock from Merchforce and write it into STOCK_COLUMN. Only rows whose value differs are touched. */\n" +
-"function merchforcePullStock(force) {\n" +
-"  var props = PropertiesService.getScriptProperties();\n" +
-"  var since = force === true ? '' : (props.getProperty('mf_stock_version') || '');\n" +
-"  var res = UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
-"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true, followRedirects: true,\n" +
-"    payload: JSON.stringify({ action: 'syncStock', token: MERCHFORCE_TOKEN, push_key: PUSH_KEY, since: since })\n" +
-"  });\n" +
-"  var out;\n" +
-"  try { out = JSON.parse(res.getContentText()); } catch (e) { Logger.log('Merchforce did not answer with JSON: ' + res.getContentText().slice(0, 200)); return; }\n" +
-"  if (!out.ok) { Logger.log('Merchforce: ' + out.error); return; }\n" +
-"  if (out.unchanged) return;\n" +
-"  var stock = {};\n" +
-"  (out.stock || []).forEach(function (s) { stock[String(s.sku).trim().toUpperCase()] = s.on_hand; });\n" +
-"  var written = 0;\n" +
-"  SpreadsheetApp.getActive().getSheets().forEach(function (sh) {\n" +
-"    if (TABS.length && TABS.indexOf(sh.getName()) < 0) return;\n" +
-"    var lr = sh.getLastRow(), lc = sh.getLastColumn();\n" +
-"    if (lr < 2 || lc < 1) return;\n" +
-"    var headers = sh.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });\n" +
-"    var iSku = headers.indexOf(SKU_COLUMN), iStock = headers.indexOf(STOCK_COLUMN);\n" +
-"    if (iSku < 0 || iStock < 0) return;\n" +
-"    var skus = sh.getRange(2, iSku + 1, lr - 1, 1).getValues();\n" +
-"    var cells = sh.getRange(2, iStock + 1, lr - 1, 1);\n" +
-"    var cur = cells.getValues();\n" +
-"    var changed = false;\n" +
-"    for (var i = 0; i < skus.length; i++) {\n" +
-"      var k = String(skus[i][0]).trim().toUpperCase();\n" +
-"      if (!k || !(k in stock)) continue;\n" +
-"      if (Number(cur[i][0]) === Number(stock[k])) continue;\n" +
-"      cur[i][0] = stock[k]; changed = true; written++;\n" +
-"    }\n" +
-"    if (changed) cells.setValues(cur);\n" +
-"  });\n" +
-"  props.setProperty('mf_stock_version', String(out.version));\n" +
-"  Logger.log('Merchforce stock applied: ' + written + ' cells, version ' + out.version);\n" +
-"}";
-}
-
-function openPushConnector(m) {
-  var push = m.mode === 'push';
-  var code = connectorCode(m);
-  openDrawer(
-    '<h2 style="margin:0 0 4px">Connector for ' + esc(m.brand ? brandNameSafe(m.brand) : 'this sheet') + '</h2>' +
-    (push
-      ? '<p class="note" style="margin:0 0 14px">Your file stays entirely private: this script runs inside <b>your</b> sheet, under your own Google account. It sends only the columns mapped here, and pulls the Merchforce stock figure back into your Stock column, so the sheet stays current without giving Merchforce any access to the file.</p>'
-      : '<p class="note" style="margin:0 0 14px">For a sheet shared with Merchforce as <b>Viewer only</b>. Merchforce reads it as usual; this script, running under your own account, pulls the Merchforce stock figure into your Stock column every few minutes and on demand, so the sheet reflects every dispatch and receipt without Merchforce ever being given edit access.</p>') +
-    '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
-      '<li>Open the sheet → <b>Extensions → Apps Script</b>.</li>' +
-      '<li>Replace whatever is in the editor with the script below and save.</li>' +
-      '<li>Choose the <b>install</b> function, click <b>Run</b>, approve the authorization (your own script, on your own file).</li>' +
-      (push ? '<li>The first run sends every tab\'s column names here — then map them in Merchforce (fields may come from different tabs).</li>' : '') +
-      '<li>Reopen the sheet: a <b>Merchforce</b> menu appears with <b>Pull stock now</b>' + (push ? ' and <b>Send this sheet now</b>' : '') + '.</li>' +
-    '</ol>' +
-    '<p class="note">Stock is pulled every ' + 5 + ' minutes by default (POLL_MINUTES in the script; 1 on a Google Workspace account). Only cells whose value differs are written. ' +
-      (push ? 'Edits in the sheet still reach Merchforce on every edit (max once per 30 seconds) plus hourly. ' : '') +
-      'The key below identifies this mapping — treat it like a password. Column names in the script match this mapping: ' + esc((m.sources && m.sources[0] && m.sources[0].sku_col) || m.sku_col || 'Code') + ' for the code and ' +
-      esc(((m.sources || []).concat([{ fields: m.fields || [] }]).map(function (s) { return (s.fields || []).filter(function (f) { return f.field === 'on_hand'; }).map(function (f) { return f.col; })[0]; }).filter(String)[0]) || 'Stock') + ' for stock.</p>' +
-    '<textarea id="lsCode" readonly style="width:100%;height:300px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
-    '<button class="btn primary" id="lsCopy" style="width:100%;justify-content:center;margin-top:10px">Copy script</button>');
-  $('lsCode').value = code;
-  $('lsCopy').onclick = function () {
-    $('lsCode').select();
-    try { navigator.clipboard.writeText(code); } catch (e) { document.execCommand('copy'); }
-    toast('Copied — paste it into Extensions → Apps Script on the sheet');
-  };
-}
-
-/* Instant (edit-triggered) sync: connector script for the stock sheet. */
-function openLiveSyncHelp() {
-  var code =
-"/** Merchforce live-sync connector — lives on your stock sheet. */\n" +
-"var MERCHFORCE_URL = '" + CONFIG.API_URL + "';\n" +
-"var MERCHFORCE_TOKEN = '" + CONFIG.API_TOKEN + "';\n" +
-"\n" +
-"function install() {\n" +
-"  ScriptApp.getProjectTriggers().forEach(function (t) {\n" +
-"    if (t.getHandlerFunction() === 'merchforcePing') ScriptApp.deleteTrigger(t);\n" +
-"  });\n" +
-"  ScriptApp.newTrigger('merchforcePing')\n" +
-"    .forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();\n" +
-"}\n" +
-"\n" +
-"function merchforcePing(e) {\n" +
-"  UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
-"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true,\n" +
-"    payload: JSON.stringify({ action: 'syncPing', token: MERCHFORCE_TOKEN,\n" +
-"                              sheet: SpreadsheetApp.getActive().getId() })\n" +
-"  });\n" +
-"}";
-  openDrawer(
-    '<h2 style="margin:0 0 4px">⚡ Instant sync</h2>' +
-    '<p class="note" style="margin:0 0 14px">Google Sheets cannot push changes out by itself, so instant sync works by installing this tiny connector on your sheet. The moment anyone edits a cell, it pings Merchforce and the mapped fields are pulled within seconds (pings are debounced to one per 45 seconds per sheet).</p>' +
-    '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
-      '<li>Open the stock sheet (anyone with <b>edit</b> access can do this).</li>' +
-      '<li>Menu: <b>Extensions → Apps Script</b>.</li>' +
-      '<li>Delete whatever is in the editor and paste the script below.</li>' +
-      '<li>Save, pick the <b>install</b> function in the toolbar, click <b>Run</b>, and approve the authorization.</li>' +
-    '</ol>' +
-    '<p class="note">Done once per sheet. The sheet must already be linked as a mapping here, or pings are ignored. Keep a scheduled auto-sync on as a safety net.</p>' +
-    '<textarea id="lsCode" readonly style="width:100%;height:280px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
-    '<button class="btn primary" id="lsCopy" style="width:100%;justify-content:center;margin-top:10px">Copy script</button>');
-  $('lsCode').value = code;
-  $('lsCopy').onclick = function () {
-    $('lsCode').select();
-    try { navigator.clipboard.writeText(code); } catch (e) { document.execCommand('copy'); }
-    toast('Copied — paste it into Extensions → Apps Script on the sheet');
   };
 }
 

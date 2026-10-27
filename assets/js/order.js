@@ -1,12 +1,7 @@
 /* Merchforce — the client's own order page, opened from the link in their email. */
 'use strict';
 
-var CONFIG = {
-  API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? '/api' : 'https://script.google.com/macros/s/AKfycbyeFbVGHmXXG06D8E-nTvBL3-WyWvAtkYEcbI-2a-qb_fnlvtKMRyH0G4eH2LzO8vYn/exec',
-  API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'mf-demo-token' : 'mf_HmRaxrSvaYGCbOSGF3c8hqANccOQ'
-};
+// The backend is Supabase (mf-client.js). This page needs no sign-in: the order's own token authorises it.
 
 var TOKEN = new URLSearchParams(location.search).get('t') || '';
 var O = null;
@@ -26,14 +21,8 @@ function toast(msg) {
 }
 function api(action, body) {
   body = body || {};
-  body.action = action;
-  body.token = CONFIG.API_TOKEN;   // site key
   body.t = body.t || TOKEN;        // this order's own key
-  return fetch(CONFIG.API_URL, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(body), redirect: 'follow'
-  }).then(function (r) { return r.json(); })
-    .then(function (res) { if (!res.ok) throw new Error(res.error || 'Request failed'); return res; });
+  return MF.call(action, body);
 }
 
 function load() {

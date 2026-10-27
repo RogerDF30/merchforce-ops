@@ -1,3 +1,18 @@
 .DS_Store
 node_modules/
 apps-script/.clasp.json
+
+# Supabase secrets
+supabase/.env*
+!supabase/.env.example
+supabase/.temp/
+supabase/.secrets*
+supabase/tests/.test-*
+supabase/google-*.json
+hosting/dist/
+hosting/.wrangler/
+
+# test artefacts
+supabase/tests/ui-shots/
+__pycache__/
+*.pyc

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/css/style.css?v=30">
+<link rel="stylesheet" href="assets/css/style.css?v=40">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2316192b'/><text x='50' y='68' font-size='55' font-family='sans-serif' font-weight='800' fill='white' text-anchor='middle'>M</text></svg>">
 <style>body { background: #fff; }</style>
 </head>
@@ -26,15 +26,6 @@
       <div class="field"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>
       <div class="form-err" id="lockErr"></div>
       <button class="btn primary" id="loginBtn" style="width:100%;justify-content:center">Sign in</button>
-      <p class="note" style="margin:12px 0 0;text-align:center"><a href="#" id="useMaster">Use the master key instead</a></p>
-    </div>
-
-    <div id="lockMaster" hidden>
-      <div class="field"><label>Master key</label><input id="adminKey" type="password" autocomplete="off"></div>
-      <div class="form-err" id="lockErr2"></div>
-      <button class="btn primary" id="unlockBtn" style="width:100%;justify-content:center">Unlock</button>
-      <p class="note" style="margin:10px 0 0">The master key is for recovery and for creating the first staff account. Actions taken with it are logged as <b>master</b>, not as a person.</p>
-      <p class="note" style="margin:8px 0 0;text-align:center"><a href="#" id="useStaff">Back to sign in</a></p>
     </div>
 
     <p class="note" style="margin:12px 0 0;text-align:center">build <span id="buildTag">—</span></p>
@@ -55,9 +46,11 @@
       </div>
     </div>
     <div class="gsearch"><div class="ppick-wrap"><input id="gSearch" placeholder="Search products, enquiries, orders, accounts, contacts  ( / )" autocomplete="off"><div class="ppick gs-panel" id="gSearchPick" hidden></div></div></div>
+    <div id="notices" hidden></div>
     <nav class="chips" id="tabs">
       <button class="chip on" data-t="enquiries">Enquiries</button>
       <button class="chip" data-t="orders">Orders</button>
+      <button class="chip" data-t="returns">Returns</button>
       <button class="chip" data-t="mine">My enquiries</button>
       <button class="chip" data-t="accounts">Accounts</button>
       <button class="chip" data-t="catalog">Catalog</button>
@@ -70,6 +63,7 @@
     </nav>
     <section class="panel" id="p-enquiries"><div class="spin"></div></section>
     <section class="panel" id="p-orders" hidden></section>
+    <section class="panel" id="p-returns" hidden></section>
     <section class="panel" id="p-mine" hidden></section>
     <section class="panel" id="p-accounts" hidden></section>
     <section class="panel" id="p-catalog" hidden></section>
@@ -92,6 +86,9 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="assets/js/admin.js?v=30"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="assets/js/mf-config.js?v=40"></script>
+<script src="assets/js/mf-client.js?v=40"></script>
+<script src="assets/js/admin.js?v=40"></script>
 </body>
 </html>

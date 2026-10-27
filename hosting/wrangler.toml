@@ -1,0 +1,13 @@
+# Merchforce console on Cloudflare: one static site for every vendor.
+# The vendor comes from the subdomain (crystalcorner.merchforce.io), read in the
+# browser by mf-client.js, so a new vendor needs no DNS or deploy step.
+# Build first: hosting/build.sh copies only the public site files into dist/.
+name = "merchforce-console"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "404-page"
+
+# Once merchforce.io's DNS is on Cloudflare, serve every subdomain:
+# routes = [ { pattern = "*.merchforce.io/*", zone_name = "merchforce.io" } ]

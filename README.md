@@ -47,6 +47,17 @@ plan a reorder lands in. Receiving a supply order is the only action here that
 changes on hand, and it writes a StockLog row like every other movement. A daily
 reorder digest can be emailed to the notification address.
 
+## Returns
+
+Staff log a return from any order that has shipped (Dispatched, Delivered or
+Closed): reason, quantity per line, note. A return runs Requested → Approved →
+Received → Closed, or Rejected before receipt. Receiving is the inspection: every
+unit is restocked (back on hand, with a StockLog row that also takes it out of
+consumption) or scrapped. Closing records the resolution — credit note or refund
+(amount, reference, optional document), replacement (a linked zero-value order
+that deducts stock and ships from Orders), or none. Returns cannot exceed what
+was ordered, less what is already coming back.
+
 ## Decks
 
 PDF (A4) and PPTX (16:9) are built server side from the same data. Compact

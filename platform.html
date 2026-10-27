@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merchforce Platform</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css?v=40">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2316192b'/><text x='50' y='68' font-size='55' font-family='sans-serif' font-weight='800' fill='white' text-anchor='middle'>M</text></svg>">
+<style>body { background: #FAFAFA; }</style>
+</head>
+<body>
+
+<div id="lock">
+  <div class="lockbox">
+    <div class="logo" style="margin-bottom:14px"><span class="mark" style="background:var(--ink)">M</span> Merchforce Platform</div>
+    <h2>Sign in</h2>
+    <p id="lockMsg">CompanyStore platform admins only.</p>
+    <div class="field"><label>Email</label><input id="lEmail" type="email" autocomplete="username"></div>
+    <div class="field"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>
+    <div class="form-err" id="lockErr"></div>
+    <button class="btn primary" id="loginBtn" style="width:100%;justify-content:center">Sign in</button>
+  </div>
+</div>
+
+<div id="console" hidden>
+  <div class="wrap">
+    <div class="page-head row-between">
+      <div>
+        <div class="logo" style="font-size:24px"><span class="mark" style="background:var(--ink)">M</span> <h1 style="margin:0;font-size:24px">Merchforce Platform</h1></div>
+        <div class="sub">Vendors on Merchforce, run by CompanyStore</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center"><span id="whoami" style="color:var(--ink-3);font-size:13px"></span>
+        <button class="btn small" id="logout">Log out</button></div>
+    </div>
+    <div id="stats" class="stat-row"></div>
+    <nav class="chips" id="tabs" style="margin-bottom:16px">
+      <button class="chip on" data-t="vendors">Suppliers</button>
+      <button class="chip" data-t="catalog">Catalogue</button>
+      <button class="chip" data-t="admins">Admins</button>
+    </nav>
+    <section class="panel" id="p-vendors">
+      <div class="panel-head"><h2>Suppliers</h2><span class="sp"></span><button class="btn primary small" id="newVendor">+ New supplier</button></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr>
+        <th>Supplier</th><th>Address</th><th>Admins</th><th class="num">Staff</th><th class="num">Products</th><th class="num">Orders</th><th>Last order</th><th>Email</th><th></th>
+      </tr></thead><tbody id="rows"></tbody></table></div>
+    </section>
+    <section class="panel" id="p-catalog" hidden>
+      <div class="panel-head"><h2>Catalogue across suppliers</h2><span class="sp"></span>
+        <select id="cVendor" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px"><option value="">All suppliers</option></select>
+        <input id="cQ" placeholder="search SKU, name, brand, HSN" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;width:260px"></div>
+      <div class="note" id="cCount" style="margin:-4px 0 8px"></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr>
+        <th></th><th>Supplier</th><th>SKU</th><th>Product</th><th>Brand</th><th class="num">MOQ</th><th class="num">From</th><th class="num">On hand</th><th class="num">Available</th><th>Visible</th><th></th>
+      </tr></thead><tbody id="cRows"></tbody></table></div>
+    </section>
+    <section class="panel" id="p-admins" hidden>
+      <div class="panel-head"><h2>CompanyStore admins</h2><span class="sp"></span><button class="btn primary small" id="newAdmin">+ Add admin</button></div>
+      <p class="note" style="margin-top:-6px"><b>Editors</b> create suppliers, manage admins, and can work inside any supplier's console. <b>Viewers</b> can see every supplier and catalogue but cannot change anything.</p>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added by</th><th></th></tr></thead><tbody id="aRows"></tbody></table></div>
+    </section>
+  </div>
+</div>
+
+<div class="rdrawer" id="mOverlay" hidden>
+  <div class="rdrawer-inner">
+    <div style="display:flex;justify-content:flex-end"><button class="btn ghost small" id="mClose">✕ Close</button></div>
+    <div id="mBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="assets/js/mf-config.js?v=40"></script>
+<script src="assets/js/mf-client.js?v=40"></script>
+<script src="assets/js/platform.js?v=40"></script>
+</body>
+</html>
