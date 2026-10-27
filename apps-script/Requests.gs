@@ -64,7 +64,6 @@ function fnRequestSubmit_(p) {
       list_price: l.price, gst: l.gst, hsn: l.hsn || ''
     });
   });
-  fnTrack_({ events: cleaned.map(function (l) { return { sku: l.sku, type: 'request' }; }) });
   audit_(p.email, 'request_new', id, cleaned.length + ' lines, est ' + total);
   notifyNewRequest_(id, p, cleaned, total);
   return ok_({ request_id: id, total_est: total });
@@ -135,72 +134,35 @@ function fnAdminRequestAssign_(p) {
 function safeJson_(v) { try { return JSON.parse(v || '{}'); } catch (e) { return {}; } }
 
 /**
- * Admin: move a request through the lifecycle (or save admin notes).
- * Concurrency guard: Confirmed re-checks ATP atomically inside LockService.
- * Confirmed reserves stock; leaving Confirmed (Closed keeps it consumed via
- * on_hand decrement at Dispatched; Rejected/Expired from Confirmed releases).
+ * Admin: notes and manual status changes from the order dialog.
+ * Status changes go through setStatus_ so the stock rules (reserve at PI
+ * Accepted, deduct at PO Received, release on a terminal status) hold no
+ * matter which screen moved the order.
  */
 function fnAdminRequestUpdate_(p) {
-  var rowNum = findRow_('Requests', function (r) { return r.request_id === p.id; });
-  if (rowNum < 0) return err_('Request not found');
+  var hit = requestRow_(p.id);
+  if (!hit) return err_('Request not found');
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    var req = readRows_('Requests')[rowNum - 2];
-
     if (p.admin_notes !== undefined) {
-      req.admin_notes = String(p.admin_notes).slice(0, 2000);
+      hit.rec.admin_notes = String(p.admin_notes).slice(0, 2000);
+      hit.rec.updated = now_();
+      writeRecord_('Requests', hit.rowNum, hit.rec);   // notes are kept even if the status change is refused
     }
-
-    if (p.status && p.status !== req.status) {
-      var valid = STATUSES.concat(TERMINAL);
-      if (valid.indexOf(p.status) < 0) return err_('Bad status');
-      var from = req.status, to = p.status;
-
-      var lines = readRows_('RequestLines').filter(function (l) { return l.request_id === p.id; });
-
-      if (to === 'Confirmed') {
-        // atomic ATP re-check — first confirmed wins
-        var products = {};
-        readRows_('Products').forEach(function (r) { products[skuKey_(r.sku)] = r; });
-        var short = [];
-        lines.forEach(function (l) {
-          var pr = products[skuKey_(l.sku)];
-          if (!pr || atp_(pr) < toNum_(l.qty)) {
-            short.push(l.sku + ' (need ' + l.qty + ', ATP ' + (pr ? atp_(pr) : 0) + ')');
-          }
-        });
-        if (short.length) {
-          return err_('Insufficient stock — offer partial/backorder or requote: ' + short.join(', '));
-        }
-        adjustStock_(lines, 'reserved', +1, 'confirm ' + p.id, p.actor);
-      }
-      if (from === 'Confirmed' && (to === 'Rejected' || to === 'Expired')) {
-        adjustStock_(lines, 'reserved', -1, 'release ' + p.id, p.actor);
-      }
-      if (to === 'Dispatched' && from === 'Confirmed') {
-        // consume: reserved → shipped (on_hand down, reserved down)
-        adjustStock_(lines, 'dispatch', 0, 'dispatch ' + p.id, p.actor);
-      }
-
-      req.status = to;
-      var dates = safeJson_(req.status_dates);
-      dates[to] = String(now_());
-      req.status_dates = JSON.stringify(dates);
-      audit_(p.actor || 'admin', 'request_status', p.id, from + ' → ' + to);
+    if (p.status && p.status !== hit.rec.status) {
+      var e = setStatus_(hit, p.status, p.actor || 'admin');
+      if (e) return err_(e);
     }
-
-    req.updated = now_();
-    writeRecord_('Requests', rowNum, req);
-    CacheService.getScriptCache().remove('catalog_v1');
-    return ok_({ id: p.id, status: req.status });
+    return ok_({ id: p.id, status: hit.rec.status });
   } finally {
     lock.releaseLock();
   }
 }
 
-/** dir +1: reserve qty. dir -1: release. mode 'dispatch': on_hand -= qty, reserved -= qty. */
+/** dir +1: reserve qty. dir -1: release. mode 'dispatch': on_hand -= qty, reserved -= qty.
+ *  mode 'return': on_hand += qty (a deducted order cancelled before it shipped). */
 function adjustStock_(lines, mode, dir, reason, actor) {
   var sh = sheet_('Products');
   var cols = SHEETS.Products;
@@ -216,10 +178,15 @@ function adjustStock_(lines, mode, dir, reason, actor) {
       sh.getRange(rowNum, iReserved).setValue(Math.max(0, toNum_(sh.getRange(rowNum, iReserved).getValue()) - qty));
       appendRecord_('StockLog', { ts: now_(), sku: l.sku, delta: -qty, reason: reason, actor: actor || 'admin' });
       moved.push(String(l.sku));
+    } else if (mode === 'return') {
+      sh.getRange(rowNum, iOnHand).setValue(toNum_(sh.getRange(rowNum, iOnHand).getValue()) + qty);
+      appendRecord_('StockLog', { ts: now_(), sku: l.sku, delta: qty, reason: reason, actor: actor || 'admin' });
+      moved.push(String(l.sku));
     } else {
       var cur = toNum_(sh.getRange(rowNum, iReserved).getValue());
       sh.getRange(rowNum, iReserved).setValue(Math.max(0, cur + dir * qty));
       appendRecord_('StockLog', { ts: now_(), sku: l.sku, delta: 0, reason: reason + ' (reserved ' + (dir > 0 ? '+' : '-') + qty + ')', actor: actor || 'admin' });
+      moved.push(String(l.sku));   // the sheet's Committed / Available columns follow holds too
     }
   });
   if (moved.length) writeBackStock_(moved, actor);

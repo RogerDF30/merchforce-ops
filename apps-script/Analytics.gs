@@ -237,13 +237,14 @@ function stockSignals_(products, lines, requests, cutoff, days, nowMs) {
   var consumed = {}, lastOut = {};
   readRows_('StockLog').forEach(function (e) {
     var delta = toNum_(e.delta);
-    if (delta >= 0) return;
-    if (!/^(PO received|dispatch)/i.test(String(e.reason))) return;
+    var reason = String(e.reason);
+    // deductions count as consumption; goods coming back ('returned …') take it back
+    if (!(delta < 0 && /^(PO received|dispatch)/i.test(reason)) && !(delta > 0 && /^returned /i.test(reason))) return;
     var k = skuKey_(e.sku);
     var ts = new Date(e.ts).getTime();
-    if (!lastOut[k] || ts > lastOut[k]) lastOut[k] = ts;
+    if (delta < 0 && (!lastOut[k] || ts > lastOut[k])) lastOut[k] = ts;
     if (ts < cutoff) return;
-    consumed[k] = (consumed[k] || 0) + Math.abs(delta);
+    consumed[k] = Math.max(0, (consumed[k] || 0) - delta);
   });
 
   // value ranking for ABC, over the same window

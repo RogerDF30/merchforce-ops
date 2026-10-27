@@ -41,13 +41,14 @@ function consumption_(days, nowMs) {
   var out = {}, last = {};
   readRows_('StockLog').forEach(function (e) {
     var delta = toNum_(e.delta);
-    if (delta >= 0) return;
-    if (!/^(PO received|dispatch)/i.test(String(e.reason))) return;
+    var reason = String(e.reason);
+    // deductions count as consumption; a cancelled order's return takes it back
+    if (!(delta < 0 && /^(PO received|dispatch)/i.test(reason)) && !(delta > 0 && /^returned /i.test(reason))) return;
     var k = skuKey_(e.sku);
     var ts = new Date(e.ts).getTime();
-    if (!last[k] || ts > last[k]) last[k] = ts;
+    if (delta < 0 && (!last[k] || ts > last[k])) last[k] = ts;   // returns are not dispatches
     if (ts < cutoff) return;
-    out[k] = (out[k] || 0) + Math.abs(delta);
+    out[k] = Math.max(0, (out[k] || 0) - delta);
   });
   return { units: out, last: last, days: days };
 }

@@ -87,7 +87,12 @@ function doPost(e) {
       adminPiUpload:      fnAdminPiUpload_,
       adminPoUpload:      fnAdminPoUpload_,
       adminShipmentSave:  fnAdminShipmentSave_,
-      adminShipmentDelete: fnAdminShipmentDelete_
+      adminShipmentDelete: fnAdminShipmentDelete_,
+      adminReturns:       fnAdminReturns_,
+      adminReturnCreate:  fnAdminReturnCreate_,
+      adminReturnUpdate:  fnAdminReturnUpdate_,
+      adminReturnReceive: fnAdminReturnReceive_,
+      adminReturnClose:   fnAdminReturnClose_
     };
 
     var ADMIN_ONLY = { adminUsers: 1, adminUserSave: 1, adminSettings: 1 };

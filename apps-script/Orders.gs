@@ -5,8 +5,9 @@
  * Stock discipline (the whole point of the flow):
  *   PI Accepted  → RESERVE  (ATP drops; the goods are held for this buyer)
  *   PO Received  → DEDUCT   (on hand actually reduces; the sale is real)
- *   Rejected / Declined / Expired / Cancelled → release anything reserved
- *     that was never deducted.
+ *   Rejected / Declined / Expired / Cancelled → release anything reserved;
+ *     if it was already deducted but has not shipped (PO Received, In
+ *     Production) return it to on hand. Once shipped, it is refused.
  * request.stock_state ('', 'reserved', 'deducted') is the source of truth, so
  * a status corrected by hand can never double-reserve or double-deduct.
  *
@@ -133,11 +134,17 @@ function moveStock_(hit, target, actor) {
   } else if (target === '' && cur === 'reserved') {
     adjustStock_(lines, 'reserved', -1, 'released ' + id, actor);
   } else if (target === '' && cur === 'deducted') {
-    return 'Stock was already deducted for this order — adjust it in the catalog instead';
+    if (IN_HOUSE_.indexOf(String(hit.rec.status)) < 0) {
+      return 'This order has already shipped (' + hit.rec.status + '), so its stock cannot be returned automatically. Record the return in the catalogue.';
+    }
+    adjustStock_(lines, 'return', 0, 'returned ' + id, actor);   // on hand +
   }
   hit.rec.stock_state = target;
   return null;
 }
+
+/** Deducted but not yet shipped: cancelling from here puts the goods back on hand. */
+var IN_HOUSE_ = ['PO Received', 'In Production'];
 
 /** The stock state each status implies. */
 function stockStateFor_(status) {

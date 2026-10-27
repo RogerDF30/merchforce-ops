@@ -52,7 +52,7 @@ function writeRecord_(name, rowNum, record) {
   if (typeof clearChildCache_ === 'function') clearChildCache_();
   var cols = SHEETS[name];
   var sh = sheet_(name);
-  var vals = cols.map(function (c) { return (c in record) ? record[c] : ''; });
+  var vals = cols.map(function (c) { return cellValue_(c, record); });
   var n = Math.min(cols.length, sh.getMaxColumns());
   if (n < cols.length) {
     // grow the sheet so appended columns land where the schema says (headers get written by setupRun)
@@ -66,7 +66,15 @@ function writeRecord_(name, rowNum, record) {
 function appendRecord_(name, record) {
   if (typeof clearChildCache_ === 'function') clearChildCache_();
   var cols = SHEETS[name];
-  sheet_(name).appendRow(cols.map(function (c) { return (c in record) ? record[c] : ''; }));
+  sheet_(name).appendRow(cols.map(function (c) { return cellValue_(c, record); }));
+}
+
+/** Sheets turns '0902' into 902; a leading apostrophe stores codes as text. */
+var TEXT_COLS_ = { hsn: 1 };
+function cellValue_(col, record) {
+  var v = (col in record) ? record[col] : '';
+  if (TEXT_COLS_[col] && v !== '' && v !== null && v !== undefined) return "'" + String(v);
+  return v;
 }
 
 function now_() { return new Date(); }

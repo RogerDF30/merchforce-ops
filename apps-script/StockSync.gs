@@ -145,9 +145,6 @@ function fnAdminSyncMapSave_(p) {
   if (mode === 'push' && !m.brand) {
     return err_('A push mapping must be bound to one brand');
   }
-  if (m.create_new && !m.brand) {
-    return err_('To auto-create new products, the mapping must be bound to one brand');
-  }
   var maps = getSyncMaps_();
   var idx = toNum_(p.index);
   var rec = { mode: mode, brand: m.brand || '', sheet: m.sheet, tab: m.tab || '',
@@ -247,6 +244,7 @@ function runStockSync_(map, actor) {
  */
 function applySyncData_(map, tabData, actor) {
   var summary = emptySummary_();
+  var createdAll = [];   // every SKU this run created, for write-back (created_skus is capped for display)
   try {
     var sources = mapSources_(map);
     if (!sources.length) throw new Error('No field mappings — edit the mapping');
@@ -362,12 +360,12 @@ function applySyncData_(map, tabData, actor) {
       Object.keys(incoming).forEach(function (k) {
         if (known[k]) return;
         var inc = incoming[k];
-        if (map.create_new && map.brand) {
+        if (map.create_new) {
           var v = inc.values;
           var moq = v.moq || 1;
           appendRecord_('Products', {
             sku: String(inc.sku).toUpperCase(), name: v.name || String(inc.sku),
-            brand_id: map.brand, category: v.category || '', subcategory: v.subcategory || '',
+            brand_id: map.brand || '', category: v.category || '', subcategory: v.subcategory || '',
             description: v.description || '', specs: '', image_urls: '',
             moq: moq, gst_rate: v.gst_rate === undefined || v.gst_rate === null ? 18 : v.gst_rate,
             lead_time: v.lead_time || '', on_hand: v.on_hand || 0, reserved: 0,
@@ -380,6 +378,7 @@ function applySyncData_(map, tabData, actor) {
           }
           summary.created++;
           if (summary.created_skus.length < 20) summary.created_skus.push(String(inc.sku));
+          createdAll.push(String(inc.sku));
         } else {
           summary.unknown++;
           if (summary.unknown_skus.length < 20) summary.unknown_skus.push(String(inc.sku));
@@ -393,6 +392,8 @@ function applySyncData_(map, tabData, actor) {
   } catch (e) {
     summary.error = e.message || String(e);
   }
+  // fill Committed / Available on rows the sheet just introduced
+  if (map.write_back && createdAll.length) writeBackStock_(createdAll, actor);
   audit_(actor || 'sync', 'sheet_sync', (map.brand || 'all') + ':' + map.sheet,
     summary.error || (summary.updated + ' updated, ' + summary.created + ' created, ' + summary.unknown + ' unknown'));
   return summary;
@@ -521,7 +522,12 @@ function fnSyncPush_(p) {
  * Only pull mappings can do this: a push mapping never opens the sheet.
  */
 
-/** skus: array of SKU strings whose on_hand just changed. Best effort; never throws. */
+/* Columns the app owns outright: written on every stock or hold change when a
+   tab has a header with this name, never read back by a pull. */
+var WRITEBACK_EXTRA_ = { 'committed': function (r) { return toNum_(r.reserved); },
+                         'available': function (r) { return atp_(r); } };
+
+/** skus: array of SKU strings whose on_hand or reservation just changed. Best effort; never throws. */
 function writeBackStock_(skus, actor) {
   var out = { written: 0, errors: [] };
   bumpStockVersion_();
@@ -548,12 +554,18 @@ function writeBackStock_(skus, actor) {
           var headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
           var iSku = headers.indexOf(String(src.sku_col).trim()), iStock = headers.indexOf(String(f.col).trim());
           if (iSku < 0 || iStock < 0) throw new Error('column "' + (iSku < 0 ? src.sku_col : f.col) + '" not found in tab "' + (src.tab || 'first') + '"');
+          var extra = [];
+          headers.forEach(function (h, i) { var fn = WRITEBACK_EXTRA_[h.toLowerCase()]; if (fn) extra.push({ col: i + 1, fn: fn }); });
           var skuCol = o.sh.getRange(2, iSku + 1, last - 1, 1).getValues();
           var rowOf = {};
           skuCol.forEach(function (row, i) { var k = skuKey_(row[0]); if (k && rowOf[k] === undefined) rowOf[k] = i + 2; });
           mine.forEach(function (r) {
             var rowNum = rowOf[skuKey_(r.sku)];
             if (!rowNum) return;
+            extra.forEach(function (x) {
+              var c = o.sh.getRange(rowNum, x.col), v = x.fn(r);
+              if (c.getValue() === '' || Number(c.getValue()) !== v) c.setValue(v);
+            });
             var cell = o.sh.getRange(rowNum, iStock + 1);
             var next = toNum_(r.on_hand);
             if (Number(cell.getValue()) === next) return;
@@ -626,7 +638,7 @@ function fnAdminSyncWriteBackAll_(p) {
  * brand in the Merchforce format, shared with them as editor, already mapped
  * (pull, write-back on) so it works the moment they open it.
  */
-var TEMPLATE_HEADERS_ = ['Code', 'Product Name', 'HSN', 'GST %', 'MRP', 'Selling Price Excluding GST', 'Stock', 'MOQ', 'Lead Time'];
+var TEMPLATE_HEADERS_ = ['Code', 'Product Name', 'HSN', 'GST %', 'MRP', 'Selling Price Excluding GST', 'Stock', 'Committed', 'Available', 'MOQ', 'Lead Time'];
 var TEMPLATE_FIELDS_ = [
   { col: 'Product Name', field: 'name' }, { col: 'HSN', field: 'hsn' }, { col: 'GST %', field: 'gst_rate' },
   { col: 'MRP', field: 'mrp' }, { col: 'Selling Price Excluding GST', field: 'price' }, { col: 'Stock', field: 'on_hand' },
@@ -637,13 +649,23 @@ var TEMPLATE_FIELDS_ = [
 function fnAdminSyncTemplate_(p) {
   var root = DriveApp.getFolderById(props_().getProperty('FOLDER_ID'));
   var name = String(p.name || '').trim() || ('Merchforce Stock Sheet — ' + Utilities.formatDate(now_(), 'Asia/Kolkata', 'd MMM yyyy'));
+
+  var products = readRows_('Products');
+  var brands = readRows_('Brands').sort(function (a, b) { return toNum_(a.sort) - toNum_(b.sort); });
+  var branded = {};
+  brands.forEach(function (b) { branded[b.brand_id] = 1; });
+  if (p.brand) {
+    brands = brands.filter(function (b) { return b.brand_id === p.brand; });
+    if (!brands.length) return err_('Brand not found: ' + p.brand);
+  } else {
+    // Products with no brand (or a catalogue with no brands at all) go on one 'Stock' tab.
+    var loose = products.filter(function (pr) { return !branded[pr.brand_id]; });
+    if (loose.length || !brands.length) {
+      brands.push({ brand_id: '', name: 'Stock', loose: true });
+    }
+  }
   var ss = SpreadsheetApp.create(name);
   DriveApp.getFileById(ss.getId()).moveTo(root);
-
-  var brands = readRows_('Brands').sort(function (a, b) { return toNum_(a.sort) - toNum_(b.sort); });
-  if (p.brand) brands = brands.filter(function (b) { return b.brand_id === p.brand; });
-  if (!brands.length) return err_('No brands to build tabs for');
-  var products = readRows_('Products');
   var firstTier = {};
   readRows_('PriceTiers').forEach(function (t) {
     var cur = firstTier[t.sku];
@@ -652,11 +674,11 @@ function fnAdminSyncTemplate_(p) {
 
   var HEADERS = TEMPLATE_HEADERS_;
   brands.forEach(function (b) {
-    var rows = products.filter(function (pr) { return pr.brand_id === b.brand_id; })
+    var rows = products.filter(function (pr) { return b.loose ? !branded[pr.brand_id] : pr.brand_id === b.brand_id; })
       .map(function (pr) {
         return [String(pr.sku), pr.name, String(pr.hsn || ''), toNum_(pr.gst_rate) || '',
                 toNum_(pr.mrp) || '', firstTier[pr.sku] ? firstTier[pr.sku].price : '',
-                toNum_(pr.on_hand), toNum_(pr.moq) || '', pr.lead_time || ''];
+                toNum_(pr.on_hand), toNum_(pr.reserved), atp_(pr), toNum_(pr.moq) || '', pr.lead_time || ''];
       });
     var sh = ss.insertSheet(b.name);
     sh.getRange(1, 1, Math.max(2, rows.length + 1), 1).setNumberFormat('@');   // codes stay text
@@ -667,11 +689,12 @@ function fnAdminSyncTemplate_(p) {
     sh.autoResizeColumns(1, HEADERS.length);
   });
   var guide = ss.insertSheet('How to use', 0);
-  guide.getRange(1, 1, 8, 1).setValues([
+  guide.getRange(1, 1, 9, 1).setValues([
     ['Merchforce stock sheet'],
     ['One tab per brand. Keep the header row exactly as it is; the app finds columns by name.'],
     ['Code is the SKU the app knows. Do not rename a code; add a new row for a new product.'],
     ['Stock is on hand. The app reads it, and writes it back after every order, dispatch and receipt, so it always matches the console.'],
+    ['Committed and Available are filled in by Merchforce: Committed is held for accepted quotes, Available is what you can still promise. Do not edit them. Sell from Available, not Stock.'],
     ['Selling Price Excluding GST sets the first price tier. Deeper tiers are managed in the console.'],
     ['Leave a cell blank to leave that field alone in the app.'],
     ['Do not add rows above the header, and do not merge cells.'],
@@ -696,7 +719,7 @@ function fnAdminSyncTemplate_(p) {
   if (p.link) {
     var maps = getSyncMaps_();
     brands.forEach(function (b) {
-      maps = maps.filter(function (m) { return !(m.mode !== 'push' && m.brand === b.brand_id); });   // replace any pull map for this brand
+      maps = maps.filter(function (m) { return !(m.mode !== 'push' && (m.brand || '') === b.brand_id); });   // replace any pull map for this brand
       maps.push({ mode: 'pull', brand: b.brand_id, sheet: ss.getId(), tab: b.name, sku_col: 'Code',
                   fields: TEMPLATE_FIELDS_, sources: [{ tab: b.name, sku_col: 'Code', fields: TEMPLATE_FIELDS_ }],
                   create_new: true, write_back: true, push_key: '', headers: null, sample: null, tabs_meta: null, last: null });

@@ -52,6 +52,11 @@ var SHEETS = {
                  'list_price', 'gst', 'hsn'],
   Shipments:    ['request_id', 'shipment_no', 'ship_date', 'carrier', 'tracking',
                  'qty', 'note', 'status', 'created', 'delivered_on'],
+  // Customer returns against a shipped order (see Returns.gs).
+  Returns:      ['rma_id', 'request_id', 'company', 'status', 'reason', 'note', 'carrier', 'tracking',
+                 'resolution', 'amount', 'ref', 'doc_url', 'replacement_id', 'status_dates',
+                 'created_by', 'created', 'updated'],
+  ReturnLines:  ['rma_id', 'line', 'sku', 'name', 'qty', 'restocked', 'scrapped'],
   Users:        ['email', 'name', 'company', 'pass_hash', 'salt', 'active',
                  'created', 'last_login',
                  // staff accounts (appended)
